@@ -1,4 +1,9 @@
 .git
+.env
+.env.*
+config.json
+jwt.key
+.DS_Store
 **/node_modules
 web/.next
 web/out

@@ -7,7 +7,7 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 🌐 **在线 Demo**： [https://artex-demo.vercel.app/](https://artex-demo.vercel.app/)
 
-📦 **该仓库为ARTEX最后一个版本纯源码备份，docker部署源失效自行让AI本地构建即可**
+📦 **该仓库为 ARTEX 最后一个版本的源码备份。原 Docker 镜像源已失效，安装脚本与 Compose 会在本机 Docker 内从源码构建。**
 
 </div>
 
@@ -78,7 +78,7 @@ cd ARTEX
 
 脚本会：检测 / 自动安装 Docker → 让你选 **① 全部 Docker** 或 **② 本地编译运行**：
 
-- **① 全部 Docker**：填一个 Postgres 密码（可回车随机）→ 自动写 `.env` → `docker compose up -d`。
+- **① 全部 Docker**：填一个 Postgres 密码（可回车随机）→ 自动写 `.env` → 在 Docker 内构建前端和后端 → 启动并等待服务就绪。宿主机无需安装 Go / Node.js，支持 Apple Silicon（arm64）与 amd64。首次构建需下载基础镜像、依赖和浏览器，耗时较长。
 - **② 本地运行**：选数据库（连已有 / 用 Docker 起一个）→ 生成 `config.json` → `go` 编译内嵌单二进制 → 启动。
 
 装好后打开 **http://localhost:8787**（首次进入 `/setup` 设置管理员密码）。
@@ -89,11 +89,19 @@ cd ARTEX
 git clone https://github.com/Autumn-27/ARTEX.git
 cd ARTEX
 cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
-docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
+docker compose up -d --build --wait --wait-timeout 180  # 源码构建 ARTEX，拉取 postgres
 # → http://localhost:8787
 ```
 
 镜像已含常用工具（ripgrep/curl/vim/npm/nmap…）；`./skills` 与 `./data` 以绑定挂载持久化。
+
+若旧安装报 `pull access denied for autumn27/artex`，使用本仓库更新后的配置重新运行 `./install.sh` 并选择 `1` 即可；已有 `.env` 会被沿用。构建仍需联网访问 Docker Hub、npm、Go 模块代理和系统软件源。
+
+若手动构建在 `auth.docker.io` 报 DNS 超时，但 `docker pull` 正常，可在命令前加 `BUILDKIT_NO_CLIENT_TOKEN=1`，让 Docker 使用自身网络获取认证令牌。安装和更新脚本已默认采用此设置。
+
+若容器构建时下载依赖需要代理，在 `.env` 中设置 `ARTEX_BUILD_PROXY`。例如 Docker Desktop 访问宿主机的 7890 端口可填 `http://host.docker.internal:7890`（按实际端口修改，代理需允许容器连接）。此配置仅用于构建，不会写入运行镜像；LLM 代理仍在 UI 或 `ARTEX_LLM_PROXY` 中配置。
+
+若“加载模型”或“测试连接”报 `lookup ... on 127.0.0.11:53`，请在「LLM 配置」中编辑对应配置，将「代理」填为可用的出口代理。例如本机代理监听 7890 时，Docker Desktop 内应填 `http://host.docker.internal:7890`，不能填容器自己的 `127.0.0.1:7890`。测试通过后保存；每个模型配置的代理独立，留空就是直连。构建代理与「系统设置」中的目标流量代理均不会自动用于模型请求。`ARTEX_LLM_PROXY` 只用于环境变量初始化的模型配置，不会覆盖 UI 中已保存的配置。
 
 远程 MCP 可在系统设置中选择 `http`（Streamable HTTP）或 `sse`（旧版 SSE）。
 旧版 SSE 服务通常使用 `GET /sse` 建立事件流，再通过服务返回的
@@ -156,7 +164,7 @@ ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 - **随时可回退**：上一版本保留为 `artex.old`，卡片上有「回滚到上一版本」。注意数据库结构不会回退。
 - **更新会中断正在运行的任务**——更新即重启，请在空闲时进行。
 - **开发构建不给更新**：版本号是 `dev` 或 `git describe` 带后缀时禁用，避免正式版覆盖掉本地调试的二进制。
-- **Docker 下只换程序、不换镜像**：镜像里的 playwright / nmap 等工具链不会跟着升级，且 `docker compose up -d` 重建容器后会退回镜像自带的版本。要连镜像一起升级仍请用 `docker compose pull artex && docker compose up -d artex`。
+- **Docker 下只换程序、不换镜像**：镜像里的 playwright / nmap 等工具链不会跟着升级，且 `docker compose up -d` 重建容器后会退回镜像自带的版本。要连镜像一起更新，请先更新源码，再用 `docker compose up -d --build --wait --wait-timeout 180 artex`。
 - 访问 GitHub 需要代理时，在同一页面配置**全局代理**即可，更新链路会走它。更新只从 GitHub 域名下载并强制 HTTPS。
 
 ### 方式二：一键更新脚本
@@ -168,7 +176,7 @@ cd ARTEX
 
 脚本先可选 `git pull` 拉取最新代码，再让你选 **① Docker 更新** 或 **② 本地编译更新**（与 `install.sh` 对应）：
 
-- **① Docker**：可指定目标镜像 tag（回车沿用 `.env` 的 `ARTEX_TAG`，缺省 `latest`）→ `docker compose pull` → `docker compose up -d`（换新镜像重启即自动迁移）。
+- **① Docker**：从当前源码重新构建镜像 → 重启并等待服务就绪（重启即自动迁移）。旧 `.env` 中的 `ARTEX_TAG` 不再使用；如需指定版本，请先切换到对应源码版本。
 - **② 本地**：重建前端静态产物 → 重新编译 `./artex`（完成后重启进程生效）。
 
 ### 方式三：Docker Compose（手动）
@@ -176,9 +184,8 @@ cd ARTEX
 ```bash
 cd ARTEX
 git pull                       # 更新 compose / 脚本（可选）
-# 指定版本：在 .env 设 ARTEX_TAG=v0.2.0；不设则用 latest
-docker compose pull artex
-docker compose up -d artex     # 换新镜像重启 → 自动迁移 schema
+# 指定版本时先切换到对应源码版本
+docker compose up -d --build --wait --wait-timeout 180 artex  # 源码重建 → 自动迁移 schema
 docker image prune -f          # 清理旧镜像（可选）
 ```
 

@@ -45,9 +45,10 @@ install_docker(){
   else
     info "沿用已存在的 .env"
   fi
-  info "拉取镜像并启动…"
-  docker compose pull || true
-  docker compose up -d
+  info "从源码构建并启动（首次需下载工具链和依赖，可能耗时较长）…"
+  # 让 Docker 使用自身网络获取镜像认证令牌，兼容 Docker Desktop 的代理 / DNS。
+  BUILDKIT_NO_CLIENT_TOKEN="${BUILDKIT_NO_CLIENT_TOKEN:-1}" \
+    docker compose up -d --build --wait --wait-timeout 180
   ok "启动完成 → http://localhost:8787"
   info "查看日志：docker compose logs -f artex"
 }

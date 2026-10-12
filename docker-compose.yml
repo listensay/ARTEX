@@ -15,7 +15,16 @@ services:
     restart: unless-stopped
 
   artex:
-    image: autumn27/artex:${ARTEX_TAG:-latest}
+    image: artex:local
+    build:
+      context: .
+      target: source
+      args:
+        HTTP_PROXY: ${ARTEX_BUILD_PROXY:-}
+        HTTPS_PROXY: ${ARTEX_BUILD_PROXY:-}
+        http_proxy: ${ARTEX_BUILD_PROXY:-}
+        https_proxy: ${ARTEX_BUILD_PROXY:-}
+    pull_policy: build
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,6 +46,12 @@ services:
       # 把项目根目录的 skills 挂进容器（覆盖镜像内置的 /app/skills）；
       # 改 skill 无需重建镜像，容器读的就是宿主机这份。
       - ./skills:/app/skills
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8787/api/health"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 12
     restart: unless-stopped
 
 volumes:
