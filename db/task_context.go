@@ -10,6 +10,13 @@ import (
 
 const IntentBlockedLLMQuota = "llm_quota_exhausted"
 
+// IntentBlockedNoOutput marks an intent that kept ending on a completely blank model
+// response (no text, no tool call, no write-back) even after retries — almost always
+// upstream LLM instability, not a real "covered" result. Surfaced (via blocked_reason)
+// so the planner/UI can tell it apart from a genuine completion (done) and from a
+// budget exhaustion (exhausted by max_turns/timeout).
+const IntentBlockedNoOutput = "no_output"
+
 // TaskLLMProfile is one ordered entry in a task's explicit failover chain.
 type TaskLLMProfile struct {
 	ProfileID   int64      `json:"profile_id"`
@@ -563,6 +570,18 @@ func (s *ExplorationStore) SetIntentBlockedReason(id int64, reason string) error
 	_, err := s.db.Exec(`UPDATE exploration_nodes
 SET state='blocked', blocked_reason=NULLIF($1,''), completed_at=now()
 WHERE id=$2 AND exploration_id=$3 AND kind='intent'`, reason, id, s.expID)
+	return err
+}
+
+// SetIntentTerminalReason sets an intent's terminal state and attaches a reason
+// (exploration_nodes.blocked_reason) in one shot, WITHOUT forcing the 'blocked'
+// state. Used for non-blocked terminal states that still need a reason — e.g. an
+// intent marked exhausted because the model kept returning blank responses
+// (IntentBlockedNoOutput), so it is distinguishable from a budget exhaustion.
+func (s *ExplorationStore) SetIntentTerminalReason(id int64, state, reason string) error {
+	_, err := s.db.Exec(`UPDATE exploration_nodes
+SET state=$1, blocked_reason=NULLIF($2,''), completed_at=now()
+WHERE id=$3 AND exploration_id=$4 AND kind='intent'`, state, reason, id, s.expID)
 	return err
 }
 

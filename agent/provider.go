@@ -250,6 +250,14 @@ func (c Config) Provider() string {
 	return "anthropic"
 }
 
+// defaultEmptyResponseRetries is how many times a completed-but-empty model response
+// (no content block) is re-requested when the retry policy leaves it unset. The SDK's
+// own default is 2, which is far too few against an unstable upstream — the observed
+// blank-turn rate needs the policy cap (db.maxRetryAttempts = 20) to be reliably
+// suppressed. Operators can still override it (or set -1 to disable) via the retry
+// policy / profile override.
+const defaultEmptyResponseRetries = 20
+
 // NewProvider builds an llm.Provider from the config. When a rate is set, the
 // limiter lives on the single provider instance — so planner + all workers +
 // main agent (which share this provider) are bounded by one shared rate limit.
@@ -275,7 +283,13 @@ func (c Config) NewProvider() (llm.Provider, error) {
 	// 重试参数与 SDK 同语义(次数 0=默认/负=关闭,间隔 0=指数退避/>0=固定),原样透传。
 	lc.MaxRetries = c.Retry.ConnectAttempts
 	lc.RetryInterval = c.Retry.ConnectInterval
+	// 空响应重试:上游不稳时「完成但无 content block」的回合很常见,SDK 默认只重试 2 次
+	// (远不够),这里把未配置时的默认提到 defaultEmptyResponseRetries(=策略上限 20),把
+	// 这类抖动挡在模型层。语义与 SDK 一致:0(未配置)= 用本默认;-1(负)= 关闭;>0 = 用该值。
 	lc.EmptyResponseRetries = c.Retry.EmptyAttempts
+	if lc.EmptyResponseRetries == 0 {
+		lc.EmptyResponseRetries = defaultEmptyResponseRetries
+	}
 	lc.EmptyResponseInterval = c.Retry.EmptyInterval
 	if c.RatePerSecond > 0 || c.RatePerMinute > 0 {
 		lc.RateLimit = &llm.RateLimit{PerSecond: c.RatePerSecond, PerMinute: c.RatePerMinute}

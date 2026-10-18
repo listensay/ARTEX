@@ -337,16 +337,65 @@ func renderWorkerGraphOverview(data map[string]any) string {
 		string(b)
 }
 
+// RunFlags carries per-run signals beyond the raw terminal reason, so the engine can
+// tell a real completion from an upstream empty response. Both fields are zero for
+// ordinary runs.
+type RunFlags struct {
+	// ToolCalls is how many tool_use calls this run actually made. 0 means the run
+	// never touched a tool — the model produced nothing actionable.
+	ToolCalls int
+	// NoOutput is true when the run's FINAL assistant turn was completely blank: no
+	// text and no tool call (this covers both a truly-empty response and a
+	// thinking-only turn). This is the signature of an upstream empty response that
+	// cut the run short, NOT a genuine "I finished" — the engine must not fold it
+	// into 'done'.
+	NoOutput bool
+}
+
+// IsNoOutputRun reports whether a run ended as a blank (no-op) completion: no error,
+// the model naturally ended the turn, and its FINAL assistant turn was blank (no
+// text, no tool call). This is the signature of an upstream empty response — the
+// model went silent instead of finishing — regardless of how much it did earlier, so
+// it must not be mistaken for a clean 'done'.
+func IsNoOutputRun(reason harness.TerminalReason, err error, f RunFlags) bool {
+	if err != nil {
+		return false
+	}
+	if reason != harness.ReasonCompleted && reason != "" {
+		return false
+	}
+	return f.NoOutput
+}
+
+// runFlags summarizes the messages a run appended: how many tool calls it made, and
+// whether its FINAL assistant turn was blank (no text, no tool call) — the tell for
+// an upstream empty response that cut the run short.
+func runFlags(appended []llm.Message, reason harness.TerminalReason) RunFlags {
+	var f RunFlags
+	var last *llm.Message
+	for i := range appended {
+		if appended[i].Role != llm.RoleAssistant {
+			continue
+		}
+		f.ToolCalls += len(appended[i].ToolUses())
+		last = &appended[i]
+	}
+	f.NoOutput = last != nil && strings.TrimSpace(last.Text()) == "" && len(last.ToolUses()) == 0 &&
+		(reason == harness.ReasonCompleted || reason == "")
+	return f
+}
+
 // Execute runs one intent. hooks (the per-task Guard) gates every tool call; may
 // be nil. emit, if non-nil, receives one ActivityRecord per execution step.
 // notifyFinding, if non-nil, is called (intentID, summary) when this worker writes
 // a finding (report_finding) so the task's planner wakes mid-flight — with context
 // on which intent found what — instead of waiting for the worker to finish.
 // Returns the terminal reason (so the engine can distinguish completed vs
-// max_turns) and a per-kind breakdown of what was written back (so an intent that
+// max_turns), a per-kind breakdown of what was written back (so an intent that
 // explored but persisted nothing isn't mistaken for done, and the engine can log
-// facts/assets/findings separately instead of lumping them under "facts").
-func (w *Worker) Execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string)) (harness.TerminalReason, WriteCounts, error) {
+// facts/assets/findings separately instead of lumping them under "facts"), and the
+// run's RunFlags (so the engine can recognise an upstream empty response).
+func (w *Worker) Execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string)) (harness.TerminalReason, WriteCounts, RunFlags, error) {
 	return w.execute(ctx, name, taskID, as, ts, intent, hooks, emit, enr, notifyFinding, "", "")
 }
 
@@ -354,11 +403,11 @@ func (w *Worker) Execute(ctx context.Context, name string, taskID int64, as *db.
 // human-authored message. The HTTP handler does not edit the transcript;
 // agentcore records the message as a normal user turn when this Worker starts.
 // This keeps Worker continuation identical to the regular agent chat flow.
-func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
+func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, RunFlags, error) {
 	return w.execute(ctx, name, taskID, as, ts, intent, hooks, emit, enr, notifyFinding, strings.TrimSpace(requestID), strings.TrimSpace(message))
 }
 
-func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
+func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, RunFlags, error) {
 	tsx := NewToolSet(ts, name)
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
@@ -530,6 +579,10 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// enters the wrap-up phase on the live ctx, so a run whose tool overran the budget
 	// still settles (no external hard-timeout backstop needed). ctx itself carries only
 	// pause / planner kill / shutdown, which the engine distinguishes and re-queues/stops.
+	// Snapshot the message count first so runFlags only counts what THIS run added
+	// (resumed transcripts already carry prior turns' tool calls).
+	before := len(s.Messages())
 	_, reason, err := captureRunSession(ctx, s, input, emitWrap)
-	return reason, tsx.Writes(), err
+	flags := runFlags(s.Messages()[before:], reason)
+	return reason, tsx.Writes(), flags, err
 }

@@ -23,6 +23,11 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 		var p map[string]any
 		_ = json.Unmarshal(n.Payload, &p)
 		m := map[string]any{"id": n.ID, "summary": p["summary"], "state": n.State}
+		// blocked_reason：让规划者看出这条意图是「预算耗尽(exhausted)」「外部故障(blocked)」
+		// 还是「模型空响应白跑(exhausted + no_output)」——后者重派也多半白搭，别原样再派。
+		if n.BlockedReason != "" {
+			m["blocked_reason"] = n.BlockedReason
+		}
 		if n.Inherited {
 			m["source_task_id"] = n.SourceTaskID
 			m["inherited"] = true

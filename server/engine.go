@@ -69,8 +69,13 @@ func preview(s string, n int) string {
 // blocked 会白丢一条意图，所以这里对该终态额外重跑几次，每次之间退避一下，给
 // provider 恢复的时间；重试期间若被暂停/终止/取消则立即让位给对应分支处理。
 const (
-	modelErrorRetries      = 2               // model_error 收场后额外重试的次数
+	modelErrorRetries      = 20              // model_error 收场后额外重试的次数
 	modelErrorRetryBackoff = 3 * time.Second // 每次重试前的退避
+	// noOutputRetries / noOutputRetryBackoff：模型返回完全空白的一轮（无正文、无工具
+	// 调用、零写回）后，重跑同一意图的次数与退避。上游 LLM 抖动是常态，白跑就再给它机会，
+	// 别让一条没跑成的意图被误判为 done 后触发 Planner 反复重派。
+	noOutputRetries        = 20
+	noOutputRetryBackoff   = 2 * time.Second
 	workControlWaitTimeout = 30 * time.Second
 )
 
@@ -549,7 +554,7 @@ type steerHooks struct {
 // 已经限死了连续空转只推一次——推完那一轮若还是空转，Stop 钩子不会再被调到，run 直接
 // 收场;只有真正发生过一次工具回合，配额才刷新(norma/harness/query.go:534)。所以这个
 // 闸挡的是「工具 → 空转 → 推 → 工具 → 空转」这种病态循环，别让它把意图预算耗光。
-const defaultEmptyTurnNudges = 2
+const defaultEmptyTurnNudges = 20
 
 // emptyTurnNudge 是空转回合注入的续跑指令。
 //
@@ -1017,11 +1022,12 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	e.BeginLLMCall(t.ID)
 	var reason harness.TerminalReason
 	var wrote agent.WriteCounts
+	var flags agent.RunFlags
 	var err error
 	if hasChatMessage {
-		reason, wrote, err = worker.ExecuteWithMessage(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding, requestID, message)
+		reason, wrote, flags, err = worker.ExecuteWithMessage(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding, requestID, message)
 	} else {
-		reason, wrote, err = worker.Execute(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding)
+		reason, wrote, flags, err = worker.Execute(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding)
 	}
 	e.EndLLMCall(t.ID)
 	// model_error 收场 → 额外重跑几次（退避后再试）。仅在意图仍属本 work、任务
@@ -1038,9 +1044,30 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		}
 		e.BeginLLMCall(t.ID)
 		if hasChatMessage {
-			reason, wrote, err = worker.ExecuteWithMessage(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding, requestID, message)
+			reason, wrote, flags, err = worker.ExecuteWithMessage(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding, requestID, message)
 		} else {
-			reason, wrote, err = worker.Execute(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding)
+			reason, wrote, flags, err = worker.Execute(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding)
+		}
+		e.EndLLMCall(t.ID)
+	}
+	// 空响应收场（模型返回完全空白的一轮：无正文、无工具调用、零写回）→ 这是上游 LLM
+	// 抖动的典型形态，不是真的探完。按 noOutputRetries 重跑同一意图（Execute 会 resume
+	// 该意图的 transcript，等于接着上次继续，再给它一次机会），避免一条白跑的意图被误判
+	// 为 done 后 Planner 因「目标未达成且无在跑意图」的硬底线反复重派、任务原地打转。
+	// 仅在于意图仍属本 work、任务未暂停/未终止/未收尾时重试；收尾期不再重试，别挤占优雅收尾窗口。
+	for attempt := 1; attempt <= noOutputRetries &&
+		agent.IsNoOutputRun(reason, err, flags) &&
+		workCtx.Err() == nil && ectx.Err() == nil && !e.IsPaused(t.ID) && !e.isSettling(t.ID); attempt++ {
+		log.Printf("[worker %s] task %s 意图 #%d 空响应收场（无正文/无工具/零写回），%v 后重跑 (%d/%d)",
+			name, t.ID, intent.ID, noOutputRetryBackoff, attempt, noOutputRetries)
+		if sleepCtx(workCtx, noOutputRetryBackoff) {
+			break // 退避期间被取消（终止/暂停）→ 交给下方分支处理
+		}
+		e.BeginLLMCall(t.ID)
+		if hasChatMessage {
+			reason, wrote, flags, err = worker.ExecuteWithMessage(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding, requestID, message)
+		} else {
+			reason, wrote, flags, err = worker.Execute(workCtx, name, wTaskID, e.m.assets, t.Store, intent, hooks, emit, e.m.enrich, t.NotifyFinding)
 		}
 		e.EndLLMCall(t.ID)
 	}
@@ -1131,7 +1158,9 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		log.Printf("[worker %s] intent %d: %v", name, intent.ID, err)
 	}
 	// terminal分流：撞步数上限 ≠ 完成。max_turns→exhausted（规划者据此知道这个方向
-	// 试过但没真正做完、需换角度，而非当成已覆盖永久跳过）；出错→blocked；正常→done。
+	// 试过但没真正做完、需换角度，而非当成已覆盖永久跳过）；出错→blocked；空响应（模型
+	// 白跑、零产出）→exhausted(no_output)，绝不判 done；正常→done。
+	noOutput := agent.IsNoOutputRun(reason, err, flags)
 	state := "done"
 	switch {
 	case err != nil:
@@ -1142,10 +1171,19 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	case reason == harness.ReasonTimeout:
 		state = "exhausted"
 		log.Printf("[worker %s] intent %d 运行超时(exhausted)，收尾后写回 %s", name, intent.ID, wrote)
+	case noOutput:
+		state = "exhausted"
+		log.Printf("[worker %s] intent %d 空响应收场（重跑 %d 次仍无产出）→ exhausted(no_output)，不判 done", name, intent.ID, noOutputRetries)
 	}
-	if state == "blocked" && isTaskLLMChainExhausted(err) {
+	switch {
+	case state == "blocked" && isTaskLLMChainExhausted(err):
 		_ = t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedLLMQuota)
-	} else {
+	case noOutput:
+		if stateErr := t.Store.SetIntentTerminalReason(intent.ID, "exhausted", db.IntentBlockedNoOutput); stateErr != nil {
+			log.Printf("[worker %s] task %s 意图 #%d 终态 exhausted(no_output) 落库失败: %v", name, t.ID, intent.ID, stateErr)
+		}
+	case state == "blocked" || state == "exhausted" || state == "done":
+		// （blocked 无 reason / exhausted by budget / done）走常规 CAS 落库。
 		if stateErr := transitionIntentState(t.Store, intent.ID, "running", state); stateErr != nil {
 			log.Printf("[worker %s] task %s 意图 #%d 终态 %s 落库失败: %v", name, t.ID, intent.ID, state, stateErr)
 		}
