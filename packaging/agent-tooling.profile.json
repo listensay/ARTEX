@@ -1,5 +1,5 @@
 {
-  "description": "2026-10-24 本机 Linux/arm64 的角色配置记录；不含密钥、不修改 Agent 模型、提示词或审批规则。",
+  "description": "2026-10-25 本机 Linux/arm64 的角色配置；保留 Agent 模型、提示词正文和审批规则，运行时按可见技能注入场景加载指引。",
   "skills": {
     "goals": [],
     "planner": [
@@ -10,7 +10,8 @@
     "mainagent": [
       "chains-meta",
       "chains-recon",
-      "artex-toolkit"
+      "artex-toolkit",
+      "scopesentry"
     ],
     "worker": [
       "chains-ad",
@@ -24,7 +25,8 @@
       "chains-web",
       "api-recon",
       "playwright-cli",
-      "artex-toolkit"
+      "artex-toolkit",
+      "scopesentry"
     ],
     "pentest": [
       "chains-ad",
@@ -38,7 +40,8 @@
       "chains-web",
       "api-recon",
       "playwright-cli",
-      "artex-toolkit"
+      "artex-toolkit",
+      "scopesentry"
     ],
     "auto": [
       "chains-meta",
@@ -56,14 +59,16 @@
       "chains-recon",
       "chains-web",
       "playwright-cli",
-      "artex-toolkit"
+      "artex-toolkit",
+      "scopesentry"
     ],
     "verifier": [
       "chains-meta",
       "chains-recon",
       "chains-web",
       "playwright-cli",
-      "artex-toolkit"
+      "artex-toolkit",
+      "scopesentry"
     ]
   },
   "mcp": {
@@ -87,9 +92,18 @@
       ]
     },
     "ScopeSentry": {
-      "enabled": false,
-      "agents": [],
-      "reason": "本机没有外部实例 URL，保留已有密钥供将来配置"
+      "enabled": true,
+      "agents": [
+        "mainagent",
+        "worker",
+        "pentest",
+        "auto",
+        "retester",
+        "verifier"
+      ],
+      "transport": "http",
+      "url": "http://scopesentry:8082/mcp",
+      "reason": "Docker 联动部署；认证从独立 secrets 目录读取，已有 MCP 权限的角色配套加载 scopesentry 指南。"
     }
   },
   "checklist_add_agents": [

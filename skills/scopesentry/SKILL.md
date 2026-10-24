@@ -1,11 +1,20 @@
 ---
 name: scopesentry
-description: 通过 ScopeSentry MCP 管理安全扫描平台（项目、任务、模板、资产、节点）。在用户提到 ScopeSentry、MCP、API Key、扫描任务、资产查询时使用。
+description: 查询或复用 ScopeSentry 资产与扫描结果，管理项目、任务、模板和节点；资产侦察需要已有扫描数据或按授权创建扫描时，在首次调用该 MCP 前加载，用户无需点名产品。
 ---
 
 # ScopeSentry MCP 使用指南
 
-本仓库 Docker Compose 会随 ARTEX 启动 ScopeSentry 管理平台和扫描节点。首次启动自动为未配置地址的数据源写入 `http://scopesentry:8082/mcp` 和独立 `X-API-Key`，绑定 Auto 并发现工具；无需手动创建密钥。后续人工修改、关闭和解绑会保留。创建扫描任务仍须遵守当前任务授权与审批。
+本仓库 Docker Compose 会随 ARTEX 启动 ScopeSentry 管理平台和扫描节点。首次启动自动为未配置地址的数据源写入 `http://scopesentry:8082/mcp` 和独立 `X-API-Key`，绑定 Auto 并发现工具；无需手动创建密钥。启动时为已有 ScopeSentry MCP 权限的角色补齐缺失的本指南绑定，明确关闭的 skill 保持关闭。后续人工修改、关闭和解绑会保留。创建扫描任务仍须遵守当前任务授权与审批。
+
+## 按场景加载与操作
+
+- 查询既有资产、扫描结果或项目/任务/模板/节点状态，或需要按授权创建扫描时，首次调用 ScopeSentry MCP 前加载本 skill；不要求用户在意图中写出 ScopeSentry 名称。
+- 资产侦察需要扫描数据时，先按当前授权目标查询已有记录，评估时效与覆盖，再决定是否需要新扫描。使用已有数据不等于数据已验证，记录来源与局限。
+- Auto 处理用户指定的平台操作；mainagent 复用现有任务与结果，避免重复扫描；worker/pentest 仅执行当前任务或意图的步骤。
+- verifier/retester 仅查询本次单个漏洞关联的既有记录，不启动全面侦察、批量扫描或额外阶段。
+- ARTEX 本地任务和本地资产查询使用对应本地工具。没有 ScopeSentry MCP 连接或绑定时说明限制，不能伪造结果或改用 HTTP 绕过绑定。
+- 同一会话已加载且流程仍适用时无需重复加载；技能提供操作流程，不自动创建项目、模板或扫描任务。
 
 独立或外部部署时，到 ARTEX「系统配置 → MCP」配置名为 `ScopeSentry` 的服务器：HTTP 传输、实际 `/mcp` URL，以及 `X-API-Key` 请求头；保存后刷新工具列表并绑定所需 Agent。没有服务地址时保持停用。
 

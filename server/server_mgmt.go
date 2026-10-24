@@ -1769,6 +1769,12 @@ func (s *Server) pgToggleVisibility(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if body.Kind == "mcp" && body.Visible {
+		if err := pg.SeedScopeSentrySkillBindings(); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

@@ -89,5 +89,5 @@ func RefsGuideForIntent(payload json.RawMessage) string {
 		paths[i] = "skills/chains-" + c + "/refs/"
 	}
 	return "\n【L4 原文指引】该领域的反问决策链原文在 " + strings.Join(paths, "、") +
-		"(精确篇目见对应 SKILL.md),卡住或需要完整判据时 Read 对应文件。"
+		"(精确篇目见对应 SKILL.md)。首次进入该领域或需要完整判据时，先调用当前可见的对应 chains-<类别> Skill 取得索引与技能目录，再按返回的目录用 Read 读取篇目；上面是技能目录索引，不是相对任务工作目录的路径。技能不可见时仅使用已注入骨架并说明限制。"
 }

@@ -1,6 +1,6 @@
 ---
 name: api-recon
-description: 收集网站API接口时调用该skill。
+description: 收集网站 API、请求方法与参数、前端路由和 UI 触发点；首次运行接口采集前加载，遵守脚本复制、目标适配与阶段门禁。普通页面浏览不必加载。
 ---
 
 # API Recon（前端接口侦察）

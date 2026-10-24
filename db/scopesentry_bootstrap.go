@@ -5,6 +5,18 @@ import (
 	"strings"
 )
 
+// SeedScopeSentrySkillBindings fills only missing guide bindings for agents
+// already permitted to use the enabled MCP. Explicit skill-off rows survive
+// startup and later MCP binding changes; MCP permissions are never added here.
+func (d *DB) SeedScopeSentrySkillBindings() error {
+	_, err := d.Exec(`INSERT INTO agent_skill_visibility(agent_id,skill_name,enabled)
+SELECT DISTINCT v.agent_id,'scopesentry',true
+FROM agent_visibility v JOIN mcp_servers m ON m.id=v.resource_id
+WHERE v.resource_kind='mcp' AND v.enabled AND m.name='ScopeSentry' AND m.enabled
+ON CONFLICT (agent_id,skill_name) DO NOTHING`)
+	return err
+}
+
 // BootstrapScopeSentry configures the bundled data source once. A configured
 // external instance and subsequent user edits are left under the user's control.
 func (d *DB) BootstrapScopeSentry(endpoint, apiKey string) (bool, error) {
