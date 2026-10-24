@@ -1,5 +1,7 @@
 "use client";
 
+import { ExternalLink } from "@/components/external-link";
+
 import * as React from "react";
 
 import {
@@ -100,7 +102,7 @@ export function UpdateCard() {
   // 订阅更新进度。SSE 不走 Next 的 /api 重写（那层会缓冲，事件推不出来）。
   const openStream = React.useCallback(
     (fromVersion: string) => {
-      const es = new EventSource(sseUrl("/api/update/stream"));
+      const es = new EventSource(sseUrl("/api/update/stream"), { withCredentials: true });
       es.onmessage = (ev) => {
         let p: UpdateProgress;
         try {
@@ -216,14 +218,14 @@ export function UpdateCard() {
             </>
           )}
           {info?.html_url && (
-            <a
+            <ExternalLink
               href={info.html_url}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:underline"
             >
               更新日志 <ExternalLinkIcon className="size-3" />
-            </a>
+            </ExternalLink>
           )}
         </div>
 

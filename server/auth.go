@@ -19,7 +19,7 @@ import (
 const (
 	jwtKeyFilename = "jwt.key"
 	authPassKey    = "auth.password_hash"
-	jwtTTL         = 7 * 24 * time.Hour
+	jwtTTL         = 2 * time.Hour
 	keyChars       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 	// 下限与 setup 页的前端校验一致——校验只放在前端等于没放，直接打 API 就能
@@ -49,10 +49,13 @@ func validatePassword(pw string) string {
 // the project base dir (next to the executable), NOT the browsable workspace root
 // (dataDir) — the signing key must never be listable/downloadable via the file
 // manager. Legacy installs kept it at dataDir/jwt.key; if present there and not yet
-// at the new location, it is migrated (key preserved, so sessions stay valid) and
+// at the new location, it is migrated (key preserved) and
 // the old file removed so it disappears from the workspace. On first run a random
 // key is generated and persisted.
 func loadOrCreateJWTKey(keyDir, dataDir string) ([]byte, error) {
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(keyDir, jwtKeyFilename)
 	// one-time migration out of the old in-workspace location.
 	if legacy := filepath.Join(dataDir, jwtKeyFilename); legacy != path {
@@ -83,54 +86,51 @@ func loadOrCreateJWTKey(keyDir, dataDir string) ([]byte, error) {
 	return buf, nil
 }
 
-// signJWT issues a 7-day HS256 token for user ARTEX.
+// signJWT issues an explicit API bearer credential. Browsers use opaque sessions.
 func signJWT(key []byte) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "ARTEX",
+		Audience:  jwt.ClaimStrings{"artex-api-v2"},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(jwtTTL)),
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 	}).SignedString(key)
 }
 
-// verifyJWT returns true when tokenStr is a valid, non-expired HS256 token.
+// verifyJWT rejects pre-session-migration JWTs as well as other HMAC algorithms.
 func verifyJWT(tokenStr string, key []byte) bool {
-	t, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method")
-		}
-		return key, nil
-	})
+	t, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) { return key, nil },
+		jwt.WithValidMethods([]string{"HS256"}), jwt.WithAudience("artex-api-v2"), jwt.WithSubject("ARTEX"), jwt.WithExpirationRequired())
 	return err == nil && t.Valid
 }
 
-// extractToken reads the JWT from Authorization: Bearer header,
-// artex_token cookie, or ?token= query param (for SSE connections).
+// Cookie and URL JWTs are deliberately no longer accepted.
 func extractToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
 	}
-	if c, err := r.Cookie("artex_token"); err == nil && c.Value != "" {
-		return c.Value
-	}
-	return r.URL.Query().Get("token")
+	return ""
 }
 
-// requireAuth wraps h with JWT validation.
-// /api/auth/* and /api/health are exempt.
 func (s *Server) requireAuth(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		p := r.URL.Path
-		if strings.HasPrefix(p, "/api/auth/") || p == "/api/health" {
-			h.ServeHTTP(w, r)
-			return
+		public := p == "/api/auth/status" || p == "/api/auth/login" || p == "/api/auth/init" || p == "/api/health"
+		bearer := r.Header.Get("Authorization") != "" && verifyJWT(extractToken(r), s.jwtKey)
+		unsafe := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
+		if !public {
+			ok, err := s.authenticated(r)
+			if err != nil {
+				writeErr(w, 503, errDataSourceUnavailable)
+				return
+			}
+			if !ok {
+				writeErr(w, 401, "未授权")
+				return
+			}
 		}
-		tok := extractToken(r)
-		if tok == "" {
-			writeErr(w, 401, "未授权")
-			return
-		}
-		if !verifyJWT(tok, s.jwtKey) {
-			writeErr(w, 401, "token 无效或已过期")
+		if unsafe && !(bearer && !public) && !s.validCSRF(r) {
+			writeErr(w, 403, "CSRF 校验失败")
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -151,7 +151,16 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 503, errDataSourceUnavailable)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"initialized": hash != ""})
+	authenticated, err := s.authenticated(r)
+	if err != nil {
+		writeErr(w, 503, errDataSourceUnavailable)
+		return
+	}
+	if err := s.ensureCSRF(w, r); err != nil {
+		writeErr(w, 500, "CSRF 初始化失败")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"initialized": hash != "", "authenticated": authenticated})
 }
 
 // POST /api/auth/init — sets the password for the first time; rejected if already set.
@@ -197,23 +206,18 @@ func (s *Server) authInit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "密码已设置")
 		return
 	}
-	tok, err := signJWT(s.jwtKey)
-	if err != nil {
-		writeErr(w, 500, "token 生成失败")
-		return
-	}
-	writeJSON(w, 200, map[string]any{"token": tok})
+	s.issueBrowserSession(w, r, string(hash))
 }
 
-// POST /api/auth/change-password — changes the admin password. Requires a valid
-// token (this route is under /api/auth/* which requireAuth exempts, so the token
-// is validated here) AND the current password.
+// POST /api/auth/change-password requires administrator authentication and the
+// current password. The middleware also validates CSRF for browser sessions;
+// successful changes revoke all browser sessions atomically.
 func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {
 		return
 	}
-	if !verifyJWT(extractToken(r), s.jwtKey) {
+	if ok, err := s.authenticated(r); err != nil || !ok {
 		writeErr(w, 401, "未授权")
 		return
 	}
@@ -251,14 +255,20 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "密码加密失败")
 		return
 	}
-	if err := pg.SetSetting(authPassKey, string(newHash)); err != nil {
-		writeErr(w, 500, "保存失败: "+err.Error())
+	changed, err := pg.ChangeAuthPassword(hash, string(newHash))
+	if err != nil {
+		writeErr(w, 503, errDataSourceUnavailable)
 		return
 	}
+	if !changed {
+		writeErr(w, 409, "密码已被另一请求修改，请重新登录")
+		return
+	}
+	clearSessionCookies(w, r)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// POST /api/auth/login — validates username/password and returns a JWT.
+// POST /api/auth/login — validates credentials and issues an HttpOnly session.
 func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {
@@ -289,10 +299,5 @@ func (s *Server) authLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, "用户名或密码错误")
 		return
 	}
-	tok, err := signJWT(s.jwtKey)
-	if err != nil {
-		writeErr(w, 500, "token 生成失败")
-		return
-	}
-	writeJSON(w, 200, map[string]any{"token": tok})
+	s.issueBrowserSession(w, r, hash)
 }

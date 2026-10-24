@@ -5,6 +5,8 @@ description: 收集网站API接口时调用该skill。
 
 # API Recon（前端接口侦察）
 
+ARTEX Docker 已在镜像 `/opt/artex-skill-runtime` 安装锁定的 `puppeteer-core`，通过 `NODE_PATH` 解析；`CHROMIUM` 指向预装 Chromium。复制脚本到任务 OUTDIR 后仍可直接使用，无须在 skill 目录安装 node_modules。容器外运行可按 scripts/package-lock.json 安装，并设置有效的 Chromium 路径。下述复制、适配及门禁流程仍须执行。
+
 在**已授权**前提下，尽可能完整地发现：**后端 API**（路径、方法、参数、响应体）、**前端路由**、**UI 功能触发点**（Tab、弹窗、表格操作等）。
 
 ---

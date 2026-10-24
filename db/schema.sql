@@ -1,6 +1,13 @@
 -- ARTEX PostgreSQL schema (单一数据源)
 -- 幂等：可重复执行（IF NOT EXISTS / OR REPLACE / DROP TRIGGER IF EXISTS）。
 
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    password_version TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at);
+
 -- =====================================================================
 -- 0. 通用：updated_at 触发器
 -- =====================================================================
@@ -1384,3 +1391,156 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_batch
     ON notification_deliveries(batch_id) WHERE batch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_channel
     ON notification_deliveries(channel_id, id DESC);
+
+-- Fork: static honeypot signals are suspicions, not confirmed deception.
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS honeypot_score REAL NOT NULL DEFAULT 0;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS honeypot_evidence TEXT NOT NULL DEFAULT '';
+
+-- Fork batch 2: verification provenance and conservative merge identity.
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS merge_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS triage_revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS verify_requested BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_findings_merge_key ON findings(task_id, merge_key) WHERE merge_key<>'';
+CREATE INDEX IF NOT EXISTS idx_findings_verify_requested ON findings(id) WHERE verify_requested;
+CREATE TABLE IF NOT EXISTS finding_checks (
+    id BIGSERIAL PRIMARY KEY,
+    finding_id BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'verify' CHECK (kind IN ('verify','retest')),
+    conversation_id BIGINT UNIQUE REFERENCES conversations(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','completed','failed','stopped')),
+    verdict TEXT NOT NULL DEFAULT '' CHECK (verdict IN ('','verified','false_positive','inconclusive')),
+    -- 创建时冻结的 finding+资产+约束快照(同 finding_retests.snapshot),agent 经工具读取。
+    snapshot JSONB NOT NULL,
+    evidence_version BIGINT NOT NULL,
+    triage_revision BIGINT NOT NULL,
+    source_task_id BIGINT,
+    applied BOOLEAN NOT NULL DEFAULT false,
+    summary TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_finding_checks_history ON finding_checks(finding_id, id DESC);
+-- 一个 finding 同时只允许一个活跃 check(同 finding_retests 的活跃占用)。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_finding_checks_active ON finding_checks(finding_id)
+    WHERE status IN ('pending','running');
+
+-- 删除会话保留验证记录，同时解除尚未结束的验证占用。
+CREATE OR REPLACE FUNCTION stop_deleted_conversation_check() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE finding_checks SET status='stopped', error='验证会话已删除', finished_at=now()
+    WHERE conversation_id=OLD.id AND status IN ('pending','running');
+    RETURN OLD;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_conversation_check_delete ON conversations;
+CREATE TRIGGER trg_conversation_check_delete BEFORE DELETE ON conversations
+    FOR EACH ROW EXECUTE PROCEDURE stop_deleted_conversation_check();
+
+
+-- Even writing the same status is a human disposition barrier. Report updates
+-- are not source evidence; metadata/evidence edits invalidate frozen checks.
+CREATE OR REPLACE FUNCTION finding_quality_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_ARGV[0]='triage' THEN
+        NEW.triage_revision := OLD.triage_revision+1;
+    ELSIF ROW(NEW.evidence,NEW.summary,NEW.asset_ids,NEW.vulnclass,NEW.name,NEW.severity)
+       IS DISTINCT FROM ROW(OLD.evidence,OLD.summary,OLD.asset_ids,OLD.vulnclass,OLD.name,OLD.severity) THEN
+        NEW.evidence_version := OLD.evidence_version+1;
+        NEW.verify_requested := COALESCE((SELECT value FROM settings WHERE key='finding_verify_mode'),'auto')<>'off';
+        IF NEW.vulnclass IS DISTINCT FROM OLD.vulnclass THEN NEW.merge_key := ''; END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_finding_triage_revision ON findings;
+CREATE TRIGGER trg_finding_triage_revision BEFORE UPDATE OF status ON findings
+FOR EACH ROW EXECUTE PROCEDURE finding_quality_revision('triage');
+DROP TRIGGER IF EXISTS trg_finding_evidence_revision ON findings;
+CREATE TRIGGER trg_finding_evidence_revision BEFORE UPDATE OF evidence,summary,asset_ids,vulnclass,name,severity ON findings
+FOR EACH ROW EXECUTE PROCEDURE finding_quality_revision('evidence');
+
+-- Fork batch 3: remote management ledgers.
+CREATE TABLE IF NOT EXISTS pending_scope (
+    id          BIGSERIAL PRIMARY KEY,
+    task_id     BIGINT NOT NULL,
+    kind        TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','dismissed')),
+    hits        INT NOT NULL DEFAULT 1,
+    first_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at  TIMESTAMPTZ,
+    UNIQUE (task_id, kind, value)
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id                BIGSERIAL PRIMARY KEY,
+    kind              TEXT NOT NULL,           -- http_php/http_jsp/http_aspx/ssh/reverse(预留)
+    host_asset_id     BIGINT,                  -- webshell 登记为 endpoint 资产后的资产 id(可空)
+    url               TEXT NOT NULL DEFAULT '',
+    secret            TEXT NOT NULL DEFAULT '',
+    lang              TEXT NOT NULL DEFAULT '',
+    status            TEXT NOT NULL DEFAULT 'alive' CHECK(status IN ('alive','dead')),
+    created_by_task   BIGINT,
+    created_by_intent BIGINT,
+    last_beat         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(created_by_task);
+
+-- =====================================================================
+-- K. 凭据一等实体(内网渗透期 2,见 INTRANET-PIVOT-DESIGN.md §4.4)
+-- =====================================================================
+-- 从目标收割的口令/hash/密钥/ticket 全部登记。secret AES-GCM 加密存储,
+-- 密钥由 jwt.key 派生(与 sessions 不同域分离标签,见 db/credentials.go)。
+CREATE TABLE IF NOT EXISTS credentials (
+    id            BIGSERIAL PRIMARY KEY,
+    task_id       BIGINT NOT NULL,
+    host_asset_id BIGINT,                  -- 凭据来源主机资产 id(可空)
+    username      TEXT NOT NULL DEFAULT '',
+    cred_type     TEXT NOT NULL CHECK(cred_type IN
+        ('password','hash_nt','hash_lm','hash_sha1','ticket','ssh_key','token')),
+    secret        TEXT NOT NULL DEFAULT '', -- gcm1:<base64> 密文
+    domain        TEXT NOT NULL DEFAULT '', -- 域(如 CORP / corp.local),空=本地账号
+    source        TEXT NOT NULL DEFAULT '', -- 来源描述(如 "sqli dump users 表" / "/etc/shadow")
+    verified      BOOLEAN NOT NULL DEFAULT false, -- 已实测可登录
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_credentials_task ON credentials(task_id);
+
+-- =====================================================================
+-- L. 多层代理隧道台账(内网渗透期 3a,见 INTRANET-PIVOT-DESIGN.md §4.3/4.3a)
+-- =====================================================================
+-- 隧道是长寿命受管资源:平台侧 chisel server 进程、目标侧 chisel client 进程、
+-- stage 投递条目全部落台账(deploy_params 存完整部署参数,供断链自动重拉),
+-- 归属任务,用完 tunnel_teardown 回收。
+CREATE TABLE IF NOT EXISTS tunnels (
+    id             BIGSERIAL PRIMARY KEY,
+    task_id        BIGINT NOT NULL DEFAULT 0,   -- 归属任务(受管资源原则)
+    kind           TEXT NOT NULL CHECK(kind IN ('socks','portfwd')),
+    adapter        TEXT NOT NULL DEFAULT 'chisel',
+    listen_host    TEXT NOT NULL DEFAULT '',    -- 平台侧 chisel server 绑定地址
+    listen_port    INT  NOT NULL DEFAULT 0,     -- 平台侧 chisel server 端口(目标回连口)
+    target_host    TEXT NOT NULL DEFAULT '',    -- portfwd:经隧道访问的内网目标
+    target_port    INT  NOT NULL DEFAULT 0,
+    via_session_id BIGINT NOT NULL DEFAULT 0,   -- 经哪个立足点会话部署
+    remote_pid     INT  NOT NULL DEFAULT 0,     -- 目标侧 chisel client pid
+    deploy_params  JSONB NOT NULL DEFAULT '{}', -- 完整部署参数(含 auth/server_pid/stage_token/远端路径),重拉全靠它
+    state          TEXT NOT NULL DEFAULT 'deploying'
+                   CHECK(state IN ('deploying','alive','error','stopped')),
+    last_check     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    error          TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tunnels_task ON tunnels(task_id);
+CREATE INDEX IF NOT EXISTS idx_tunnels_state ON tunnels(state);
+
+-- =====================================================================
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS scope_approval_required BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE credentials ADD COLUMN IF NOT EXISTS verification_reason TEXT NOT NULL DEFAULT '';

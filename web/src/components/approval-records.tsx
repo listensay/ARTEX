@@ -112,7 +112,9 @@ function MatchCell({ row, showReason = true }: { row: InterceptApprovalRow; show
   const reason = row.reason?.replace(/^\[模型\]\s*/, "");
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      {source(row) === "model" ? (
+      {source(row) === "auto_allow" ? (
+        <Badge variant="outline">一键放行</Badge>
+      ) : source(row) === "model" ? (
         <Badge variant="outline">
           <BotIcon />
           模型判定
@@ -681,7 +683,9 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
         // filter. Older requests must remain actionable even when newer decisions
         // fill the page or a filter would hide them.
         const [history, pending] = await Promise.allSettled([
-          taskId ? api.interceptTaskPage(taskId, page, pageSize, filter) : api.interceptHistoryPage(page, pageSize, filter),
+          taskId
+            ? api.interceptTaskPage(taskId, page, pageSize, filter)
+            : api.interceptHistoryPage(page, pageSize, filter),
           api.interceptPending(),
         ]);
         if (id !== request.current) return;
@@ -835,6 +839,7 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
                 <SelectItem value="all">全部来源</SelectItem>
                 <SelectItem value="model">模型判定</SelectItem>
                 <SelectItem value="rule">规则判定</SelectItem>
+                <SelectItem value="auto_allow">一键放行</SelectItem>
                 <SelectItem value="unknown">来源未知</SelectItem>
               </SelectGroup>
             </SelectContent>

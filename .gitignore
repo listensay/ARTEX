@@ -25,7 +25,24 @@ web/next-env.d.ts
 *.swo
 
 # docs
-/docs/
+/docs/*
+!/docs/security.md
+!/docs/arsenal-deployment.md
+!/docs/arsenal-installation.md
+!/docs/arsenal-migration.md
+!/docs/honeypot-chains-migration.md
+!/docs/honeypot-detection-design.md
+!/docs/chains-integration-design.md
+!/docs/testing/
+/docs/testing/*
+!/docs/testing/security-report.md
+!/docs/testing/security-results.json
+!/docs/testing/security-settings.png
+!/docs/testing/exposure-hardening-report.md
+!/docs/testing/arsenal-deployment-report.md
+!/docs/testing/honeypot-chains-report.md
+!/docs/testing/honeypot-chains-results.json
+!/docs/testing/honeypot-assets.png
 
 # os
 .DS_Store
@@ -58,3 +75,27 @@ Thumbs.db
 /bench/
 /Dockerfile.bench
 /Dockerfile.bench.v2
+gate.key
+
+# Authentication and gate secrets
+.secrets/
+gate.token
+gate.key
+
+/output/playwright/
+
+# 第一批稳定性搬迁记录
+!/docs/stability-migration.md
+!/docs/testing/stability-report.md
+!/docs/testing/stability-results.json
+
+# 第二批漏洞质量闭环搬迁记录
+!/docs/finding-quality-migration.md
+!/docs/testing/finding-quality-report.md
+!/docs/testing/finding-quality-results.json
+!/docs/testing/finding-quality.png
+
+# ScopeSentry 一键联动部署与验证
+!/docs/scopesentry-deployment.md
+!/docs/testing/scopesentry-report.md
+!/docs/testing/scopesentry-results.json

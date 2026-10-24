@@ -1,0 +1,190 @@
+{
+  "_comment": "本机 Linux/arm64 安装清单（Python 3.12）。版本与 SHA-256 对应此次安装的实际文件；Windows 文件保留目标平台。目录只检查存在性，Python 启动脚本哈希不覆盖依赖包。",
+  "tools": [
+    {
+      "name": "suo5",
+      "purpose": "HTTP 隧道 CLI：目标无出网时经 webshell payload 建 socks5",
+      "version": "2.2.0",
+      "platform": "linux/arm64",
+      "sha256": "06ce70daa0b33a2abfbac790a8923df732dcd2b524a107763b8ac77df4fc6842",
+      "path": "tools/suo5",
+      "env": "ARTEX_SUO5_PATH",
+      "category": "tunnel"
+    },
+    {
+      "name": "suo5-payloads",
+      "purpose": "suo5 的 webshell payload 目录（suo5.jsp/php/aspx，按会话语言选用）",
+      "version": "2.2.0",
+      "platform": "any",
+      "sha256": "",
+      "path": "tools/suo5-payloads",
+      "env": "ARTEX_SUO5_PAYLOADS_DIR",
+      "category": "tunnel",
+      "kind": "directory"
+    },
+    {
+      "name": "chisel",
+      "purpose": "反向 TCP 隧道：目标能出网时建反向 socks5 / 单端口转发",
+      "version": "1.12.0",
+      "platform": "linux/arm64",
+      "sha256": "8417fbcd05a93f4c6ca1b971cb8fd7ba4702c283c1fdde47b8dce22affc6dba8",
+      "path": "tools/chisel",
+      "env": "ARTEX_CHISEL_PATH",
+      "category": "tunnel"
+    },
+    {
+      "name": "gogo",
+      "purpose": "内网端口扫描与服务识别（红队向，低噪声；端口参数 -p 1-1000，预设名为 top1/top2）",
+      "version": "2.15.0",
+      "platform": "linux/arm64",
+      "sha256": "f34e248bc1d0f8e18101655850082b9f48f5f9f5a102cbac107086f3798c20a9",
+      "path": "tools/gogo",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "naabu",
+      "purpose": "快速端口扫描（projectdiscovery）",
+      "version": "2.6.1",
+      "platform": "linux/arm64",
+      "sha256": "635d93e16b2e6423434b361c017d8fd12f354eaebbf04bcf062c97a9d4e2addc",
+      "path": "tools/naabu",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "httpx",
+      "purpose": "HTTP 服务探活与指纹/标题识别（projectdiscovery）",
+      "version": "1.12.0",
+      "platform": "linux/arm64",
+      "sha256": "28dec1033bf23c29bd2b3b0c65589f01efc8d726f3eb056ef5ce6bc19566ef7c",
+      "path": "tools/httpx",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "katana",
+      "purpose": "Web 爬虫与端点发现（projectdiscovery）",
+      "version": "1.8.0",
+      "platform": "linux/arm64",
+      "sha256": "d1cad5684a2561ede5d79844cbe5fc18ab783742c215df7c53a89baddd5800c7",
+      "path": "tools/katana",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "fscan",
+      "purpose": "内网综合扫描：端口/服务/弱口令一把梭",
+      "version": "2.2.2",
+      "platform": "linux/arm64",
+      "sha256": "cfa5a78adc0b310811af11c0b9bdaaeda0d8443d271ad2c0b28b8b52064eb9fe",
+      "path": "tools/fscan",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "impacket",
+      "purpose": "Windows 协议工具集（psexec/wmiexec/secretsdump 等，Python venv；目录条目只查存在性）",
+      "version": "0.13.1",
+      "platform": "linux/arm64",
+      "sha256": "",
+      "path": "tools/impacket",
+      "env": "",
+      "category": "arsenal",
+      "kind": "directory"
+    },
+    {
+      "name": "mimikatz",
+      "purpose": "Windows 凭据提取（目标侧投递执行）",
+      "version": "2.2.0-20220919",
+      "platform": "windows/amd64",
+      "sha256": "61c0810a23580cf492a6ba4f7654566108331e7a4134c968c2d6a05261b2d8a1",
+      "path": "tools/mimikatz.exe",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "pypykatz",
+      "purpose": "Python 版 Windows 凭据提取（离线解析 LSASS dump；venv 入口符号链接）",
+      "version": "0.6.13",
+      "platform": "linux/arm64",
+      "sha256": "86bfe4017828a9c40351699520e9ab6c82d1d0c552c28cacf241cee0a9e8fafe",
+      "path": "tools/pypykatz",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "laZagne",
+      "purpose": "本机保存密码批量提取（浏览器/邮件/WiFi 等，目标侧投递执行）",
+      "version": "2.4.7",
+      "platform": "windows/amd64",
+      "sha256": "dc06d62ee95062e714f2566c95b8edaabfd387023b1bf98a09078b84007d5268",
+      "path": "tools/laZagne.exe",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "ligolo-agent",
+      "purpose": "ligolo-ng 反向隧道 agent（目标侧运行，TUN 组网）",
+      "version": "0.9.2",
+      "platform": "linux/arm64",
+      "sha256": "14c704facda7d42b0cec3dc5c448aa01fb253e038473a2e3bce69300fa85345f",
+      "path": "tools/ligolo-agent",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "ligolo-proxy",
+      "purpose": "ligolo-ng 反向隧道 proxy（攻击机侧运行，TUN 组网）",
+      "version": "0.9.2",
+      "platform": "linux/arm64",
+      "sha256": "56cf48d38cb245bcc69b77a26441512428ac3a6f8fbe6e6fbeba81ae10537703",
+      "path": "tools/ligolo-proxy",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "peass",
+      "purpose": "权限提升枚举脚本集（linpeas/winpeas，目录条目）",
+      "version": "20261021-2fe956c4",
+      "platform": "any",
+      "sha256": "",
+      "path": "tools/peass",
+      "env": "",
+      "category": "arsenal",
+      "kind": "directory"
+    },
+    {
+      "name": "nxc",
+      "purpose": "NetExec：SMB/WinRM 等协议执行与口令喷洒（原 CrackMapExec；venv 入口符号链接）",
+      "version": "1.5.1",
+      "platform": "linux/arm64",
+      "sha256": "a85981a54bbff59f58a2553c2a8a247df756c364c303fb051cca2d642d9dc9d2",
+      "path": "tools/nxc",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "penelope",
+      "purpose": "反弹 shell handler（期 5 reverse_listen 受管进程，Python）",
+      "version": "0.21.0",
+      "platform": "any",
+      "sha256": "220e32085699033e1021d2679695142b0410f391644a0476b669c263f05f2a79",
+      "path": "tools/penelope.py",
+      "env": "",
+      "category": "arsenal"
+    }
+  ],
+  "_source": {
+    "repository": "https://github.com/panda0x123/artex-ymh",
+    "commit": "48adc7f1d8f62cbc47e658c9a2b47d6f63ca6cb1",
+    "note": "保留参考仓库版本与哈希；空版本或空哈希仍为未钉。本仓库未独立验证这些发行来源哈希。platform 描述参考文件/投递目标平台，不代表宿主可执行。"
+  },
+  "_installation": {
+    "installed_at": "2026-10-24T04:46:27.104930+00:00",
+    "platform": "linux/arm64",
+    "python": "3.12",
+    "receipt": "packaging/tools-install-lock.linux-arm64.json",
+    "note": "通用 tools-manifest.json 仍保留参考仓库清单；本文件是本机安装后的覆盖清单。"
+  }
+}

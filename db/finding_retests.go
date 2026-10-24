@@ -97,6 +97,13 @@ func (d *DB) CreateFindingRetest(ctx context.Context, findingID int64, notes str
 	if r != nil {
 		return r, nil, false, nil
 	}
+	var checkBusy bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM finding_checks WHERE finding_id=$1 AND status IN ('pending','running'))`, findingID).Scan(&checkBusy); err != nil {
+		return nil, nil, false, err
+	}
+	if checkBusy {
+		return nil, nil, false, ErrFindingTestBusy
+	}
 	// Keep the title within the same limit as ordinary conversations.
 	if runes := []rune(title); len(runes) > 100 {
 		title = string(runes[:100])
@@ -236,7 +243,12 @@ func (d *DB) FinishFindingRetest(id int64, status, reason string) error {
 	if err != nil {
 		return err
 	}
-	if finalStatus == "completed" && verdict == "fixed" {
+	var eligible bool
+	if err := tx.QueryRow(`SELECT f.evidence_version=(r.snapshot->'finding'->>'evidence_version')::bigint AND f.triage_revision=COALESCE((r.snapshot->'finding'->>'triage_revision')::bigint,0)
+ FROM findings f JOIN finding_retests r ON r.finding_id=f.id WHERE r.id=$1`, id).Scan(&eligible); err != nil {
+		return err
+	}
+	if eligible && finalStatus == "completed" && verdict == "fixed" {
 		// 走带通知的版本，与人工在详情页改状态共用同一套语义。
 		//
 		// 此前这里是裸的 UPDATE：复测判「已修复」时状态确实变了，但配了

@@ -220,6 +220,17 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 		if err := pg.SeedTool(s.Key, s.Desc, schema, agents); err != nil {
 			log.Printf("[tools] seed %s 失败: %v", s.Key, err)
 		}
+		// Older catalogs override code schemas at runtime. Add the new optional
+		// honey/chains fields without resetting any page-edited configuration.
+		switch s.Key {
+		case "add_intent", "insert_assets", "report_finding":
+			if err := pg.MergeToolSchemaProperties(s.Key, schema); err != nil {
+				log.Printf("[tools] schema upgrade %s 失败: %v", s.Key, err)
+			}
+		}
+	}
+	if err := pg.AddDefaultToolBindingOnce("fork_mainagent_kill_binding_v1", "kill_work", json.RawMessage(`["planner"]`), "mainagent"); err != nil {
+		log.Printf("[tools] mainagent kill_work binding migration failed: %v", err)
 	}
 	// Seed the traffic host tools so they're bindable per-agent like built-ins.
 	// Default binding = worker (preserves prior behavior). Their runtime availability
@@ -320,6 +331,14 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 				}
 			}
 		}
+		if agentKey == "worker" {
+			for i, t := range out {
+				if t.Name() == "Bash" {
+					out[i] = agent.DecorateTool(t, t.Description()+bashUANote, t.InputSchema())
+					break
+				}
+			}
+		}
 		return out
 	}
 }
@@ -371,3 +390,5 @@ func jsonStrMap(raw json.RawMessage) map[string]string {
 	}
 	return out
 }
+
+const bashUANote = "\n\nHTTP 命令行客户端统一使用 $ARTEX_UA（本任务稳定分配）作为 User-Agent。UA 不改变 TLS/HTTP2 指纹；不要把命令行库伪装为浏览器。需要浏览器时使用真实 browser MCP，保留证书和安全校验。"

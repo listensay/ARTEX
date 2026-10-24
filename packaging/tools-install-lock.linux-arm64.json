@@ -1,0 +1,2378 @@
+{
+  "schema_version": 1,
+  "platform": "linux/arm64",
+  "python": "3.12",
+  "installed_at": "2026-10-24T04:46:27.104930+00:00",
+  "entries": [
+    {
+      "name": "suo5",
+      "purpose": "HTTP 隧道 CLI：目标无出网时经 webshell payload 建 socks5",
+      "version": "2.2.0",
+      "platform": "linux/arm64",
+      "sha256": "06ce70daa0b33a2abfbac790a8923df732dcd2b524a107763b8ac77df4fc6842",
+      "path": "tools/suo5",
+      "env": "ARTEX_SUO5_PATH",
+      "category": "tunnel"
+    },
+    {
+      "name": "suo5-payloads",
+      "purpose": "suo5 的 webshell payload 目录（suo5.jsp/php/aspx，按会话语言选用）",
+      "version": "2.2.0",
+      "platform": "any",
+      "sha256": "",
+      "path": "tools/suo5-payloads",
+      "env": "ARTEX_SUO5_PAYLOADS_DIR",
+      "category": "tunnel",
+      "kind": "directory"
+    },
+    {
+      "name": "chisel",
+      "purpose": "反向 TCP 隧道：目标能出网时建反向 socks5 / 单端口转发",
+      "version": "1.12.0",
+      "platform": "linux/arm64",
+      "sha256": "8417fbcd05a93f4c6ca1b971cb8fd7ba4702c283c1fdde47b8dce22affc6dba8",
+      "path": "tools/chisel",
+      "env": "ARTEX_CHISEL_PATH",
+      "category": "tunnel"
+    },
+    {
+      "name": "gogo",
+      "purpose": "内网端口扫描与服务识别（红队向，低噪声；端口参数 -p 1-1000，预设名为 top1/top2）",
+      "version": "2.15.0",
+      "platform": "linux/arm64",
+      "sha256": "f34e248bc1d0f8e18101655850082b9f48f5f9f5a102cbac107086f3798c20a9",
+      "path": "tools/gogo",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "naabu",
+      "purpose": "快速端口扫描（projectdiscovery）",
+      "version": "2.6.1",
+      "platform": "linux/arm64",
+      "sha256": "635d93e16b2e6423434b361c017d8fd12f354eaebbf04bcf062c97a9d4e2addc",
+      "path": "tools/naabu",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "httpx",
+      "purpose": "HTTP 服务探活与指纹/标题识别（projectdiscovery）",
+      "version": "1.12.0",
+      "platform": "linux/arm64",
+      "sha256": "28dec1033bf23c29bd2b3b0c65589f01efc8d726f3eb056ef5ce6bc19566ef7c",
+      "path": "tools/httpx",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "katana",
+      "purpose": "Web 爬虫与端点发现（projectdiscovery）",
+      "version": "1.8.0",
+      "platform": "linux/arm64",
+      "sha256": "d1cad5684a2561ede5d79844cbe5fc18ab783742c215df7c53a89baddd5800c7",
+      "path": "tools/katana",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "fscan",
+      "purpose": "内网综合扫描：端口/服务/弱口令一把梭",
+      "version": "2.2.2",
+      "platform": "linux/arm64",
+      "sha256": "cfa5a78adc0b310811af11c0b9bdaaeda0d8443d271ad2c0b28b8b52064eb9fe",
+      "path": "tools/fscan",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "impacket",
+      "purpose": "Windows 协议工具集（psexec/wmiexec/secretsdump 等，Python venv；目录条目只查存在性）",
+      "version": "0.13.1",
+      "platform": "linux/arm64",
+      "sha256": "",
+      "path": "tools/impacket",
+      "env": "",
+      "category": "arsenal",
+      "kind": "directory"
+    },
+    {
+      "name": "mimikatz",
+      "purpose": "Windows 凭据提取（目标侧投递执行）",
+      "version": "2.2.0-20220919",
+      "platform": "windows/amd64",
+      "sha256": "61c0810a23580cf492a6ba4f7654566108331e7a4134c968c2d6a05261b2d8a1",
+      "path": "tools/mimikatz.exe",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "pypykatz",
+      "purpose": "Python 版 Windows 凭据提取（离线解析 LSASS dump；venv 入口符号链接）",
+      "version": "0.6.13",
+      "platform": "linux/arm64",
+      "sha256": "86bfe4017828a9c40351699520e9ab6c82d1d0c552c28cacf241cee0a9e8fafe",
+      "path": "tools/pypykatz",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "laZagne",
+      "purpose": "本机保存密码批量提取（浏览器/邮件/WiFi 等，目标侧投递执行）",
+      "version": "2.4.7",
+      "platform": "windows/amd64",
+      "sha256": "dc06d62ee95062e714f2566c95b8edaabfd387023b1bf98a09078b84007d5268",
+      "path": "tools/laZagne.exe",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "ligolo-agent",
+      "purpose": "ligolo-ng 反向隧道 agent（目标侧运行，TUN 组网）",
+      "version": "0.9.2",
+      "platform": "linux/arm64",
+      "sha256": "14c704facda7d42b0cec3dc5c448aa01fb253e038473a2e3bce69300fa85345f",
+      "path": "tools/ligolo-agent",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "ligolo-proxy",
+      "purpose": "ligolo-ng 反向隧道 proxy（攻击机侧运行，TUN 组网）",
+      "version": "0.9.2",
+      "platform": "linux/arm64",
+      "sha256": "56cf48d38cb245bcc69b77a26441512428ac3a6f8fbe6e6fbeba81ae10537703",
+      "path": "tools/ligolo-proxy",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "peass",
+      "purpose": "权限提升枚举脚本集（linpeas/winpeas，目录条目）",
+      "version": "20261021-2fe956c4",
+      "platform": "any",
+      "sha256": "",
+      "path": "tools/peass",
+      "env": "",
+      "category": "arsenal",
+      "kind": "directory"
+    },
+    {
+      "name": "nxc",
+      "purpose": "NetExec：SMB/WinRM 等协议执行与口令喷洒（原 CrackMapExec；venv 入口符号链接）",
+      "version": "1.5.1",
+      "platform": "linux/arm64",
+      "sha256": "a85981a54bbff59f58a2553c2a8a247df756c364c303fb051cca2d642d9dc9d2",
+      "path": "tools/nxc",
+      "env": "",
+      "category": "arsenal"
+    },
+    {
+      "name": "penelope",
+      "purpose": "反弹 shell handler（期 5 reverse_listen 受管进程，Python）",
+      "version": "0.21.0",
+      "platform": "any",
+      "sha256": "220e32085699033e1021d2679695142b0410f391644a0476b669c263f05f2a79",
+      "path": "tools/penelope.py",
+      "env": "",
+      "category": "arsenal"
+    }
+  ],
+  "downloads": [
+    {
+      "repository": "zema1/suo5",
+      "version": "v2.2.0",
+      "name": "suo5-linux-arm64",
+      "url": "https://github.com/zema1/suo5/releases/download/v2.2.0/suo5-linux-arm64",
+      "sha256": "06ce70daa0b33a2abfbac790a8923df732dcd2b524a107763b8ac77df4fc6842",
+      "download_sha256": "06ce70daa0b33a2abfbac790a8923df732dcd2b524a107763b8ac77df4fc6842",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "jpillora/chisel",
+      "version": "v1.12.0",
+      "name": "chisel_1.12.0_linux_arm64.gz",
+      "url": "https://github.com/jpillora/chisel/releases/download/v1.12.0/chisel_1.12.0_linux_arm64.gz",
+      "sha256": "2ec6152cd2c74fe0146d4d79e4e7aa174521368c56e433d55e023a92ea404ec3",
+      "download_sha256": "2ec6152cd2c74fe0146d4d79e4e7aa174521368c56e433d55e023a92ea404ec3",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "chainreactors/gogo",
+      "version": "v2.15.0",
+      "name": "gogo_linux_arm64",
+      "url": "https://github.com/chainreactors/gogo/releases/download/v2.15.0/gogo_linux_arm64",
+      "sha256": "f34e248bc1d0f8e18101655850082b9f48f5f9f5a102cbac107086f3798c20a9",
+      "download_sha256": "f34e248bc1d0f8e18101655850082b9f48f5f9f5a102cbac107086f3798c20a9",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "projectdiscovery/naabu",
+      "version": "v2.6.1",
+      "name": "naabu_2.6.1_linux_arm64.zip",
+      "url": "https://github.com/projectdiscovery/naabu/releases/download/v2.6.1/naabu_2.6.1_linux_arm64.zip",
+      "sha256": "3adc2bb2395c3efff89623499b20eea66ef54924c485d3ae86762393a31736ea",
+      "download_sha256": "3adc2bb2395c3efff89623499b20eea66ef54924c485d3ae86762393a31736ea",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "projectdiscovery/httpx",
+      "version": "v1.12.0",
+      "name": "httpx_1.12.0_linux_arm64.zip",
+      "url": "https://github.com/projectdiscovery/httpx/releases/download/v1.12.0/httpx_1.12.0_linux_arm64.zip",
+      "sha256": "fd7b123c1dfbc3d69f19f524e4eebcd6ec06b9a6cbd56813c76f11645197331e",
+      "download_sha256": "fd7b123c1dfbc3d69f19f524e4eebcd6ec06b9a6cbd56813c76f11645197331e",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "projectdiscovery/katana",
+      "version": "v1.8.0",
+      "name": "katana_1.8.0_linux_arm64.zip",
+      "url": "https://github.com/projectdiscovery/katana/releases/download/v1.8.0/katana_1.8.0_linux_arm64.zip",
+      "sha256": "80e269210727a855511ffac8dfb01297b2344742acec71a35e8ba4a67a90f0f2",
+      "download_sha256": "80e269210727a855511ffac8dfb01297b2344742acec71a35e8ba4a67a90f0f2",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "shadow1ng/fscan",
+      "version": "v2.2.2",
+      "name": "fscan_2.2.2_linux_arm64",
+      "url": "https://github.com/shadow1ng/fscan/releases/download/v2.2.2/fscan_2.2.2_linux_arm64",
+      "sha256": "cfa5a78adc0b310811af11c0b9bdaaeda0d8443d271ad2c0b28b8b52064eb9fe",
+      "download_sha256": "cfa5a78adc0b310811af11c0b9bdaaeda0d8443d271ad2c0b28b8b52064eb9fe",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "gentilkiwi/mimikatz",
+      "version": "2.2.0-20220919",
+      "name": "mimikatz_trunk.zip",
+      "url": "https://github.com/gentilkiwi/mimikatz/releases/download/2.2.0-20220919/mimikatz_trunk.zip",
+      "sha256": "",
+      "download_sha256": "7accd179e8a6b2fc907e7e8d087c52a7f48084852724b03d25bebcada1acbca5",
+      "verification": "TLS_source_and_recorded_local_digest"
+    },
+    {
+      "repository": "AlessandroZ/LaZagne",
+      "version": "v2.4.7",
+      "name": "LaZagne.exe",
+      "url": "https://github.com/AlessandroZ/LaZagne/releases/download/v2.4.7/LaZagne.exe",
+      "sha256": "",
+      "download_sha256": "dc06d62ee95062e714f2566c95b8edaabfd387023b1bf98a09078b84007d5268",
+      "verification": "TLS_source_and_recorded_local_digest"
+    },
+    {
+      "repository": "nicocha30/ligolo-ng",
+      "version": "v0.9.2",
+      "name": "ligolo-ng_agent_0.9.2_linux_arm64.tar.gz",
+      "url": "https://github.com/nicocha30/ligolo-ng/releases/download/v0.9.2/ligolo-ng_agent_0.9.2_linux_arm64.tar.gz",
+      "sha256": "94c5d3b1eca9f352a770599c0e4487299d832e6de2dad891dbd2041d56a0fd7d",
+      "download_sha256": "94c5d3b1eca9f352a770599c0e4487299d832e6de2dad891dbd2041d56a0fd7d",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "nicocha30/ligolo-ng",
+      "version": "v0.9.2",
+      "name": "ligolo-ng_proxy_0.9.2_linux_arm64.tar.gz",
+      "url": "https://github.com/nicocha30/ligolo-ng/releases/download/v0.9.2/ligolo-ng_proxy_0.9.2_linux_arm64.tar.gz",
+      "sha256": "6430178776bb9efc451a62f6c468fa482c2aded84d10f64f637bfabd0fd8e7ac",
+      "download_sha256": "6430178776bb9efc451a62f6c468fa482c2aded84d10f64f637bfabd0fd8e7ac",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "peass-ng/PEASS-ng",
+      "version": "20261021-2fe956c4",
+      "name": "linpeas.sh",
+      "url": "https://github.com/peass-ng/PEASS-ng/releases/download/20261021-2fe956c4/linpeas.sh",
+      "sha256": "d01a0d9f3632fb41cfe35ef510d2b3223de6f1b44c786bd23a1d113ae4f16cef",
+      "download_sha256": "d01a0d9f3632fb41cfe35ef510d2b3223de6f1b44c786bd23a1d113ae4f16cef",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "peass-ng/PEASS-ng",
+      "version": "20261021-2fe956c4",
+      "name": "linpeas_linux_arm64",
+      "url": "https://github.com/peass-ng/PEASS-ng/releases/download/20261021-2fe956c4/linpeas_linux_arm64",
+      "sha256": "2ac6e7be80c7a10b737a2f823e9a829878dd56e178599529204162988d2e85fc",
+      "download_sha256": "2ac6e7be80c7a10b737a2f823e9a829878dd56e178599529204162988d2e85fc",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "peass-ng/PEASS-ng",
+      "version": "20261021-2fe956c4",
+      "name": "winPEASx64.exe",
+      "url": "https://github.com/peass-ng/PEASS-ng/releases/download/20261021-2fe956c4/winPEASx64.exe",
+      "sha256": "892cb3eaa91695beb48cf3f26bd75d7bb3225661507ff064bee0a73261300887",
+      "download_sha256": "892cb3eaa91695beb48cf3f26bd75d7bb3225661507ff064bee0a73261300887",
+      "verification": "publisher_digest"
+    },
+    {
+      "repository": "peass-ng/PEASS-ng",
+      "version": "20261021-2fe956c4",
+      "name": "winPEAS.bat",
+      "url": "https://github.com/peass-ng/PEASS-ng/releases/download/20261021-2fe956c4/winPEAS.bat",
+      "sha256": "cd45a0db52a7a887e34622c0af501cfcd67b65267517fe9964bd2d5af2e9d1a2",
+      "download_sha256": "cd45a0db52a7a887e34622c0af501cfcd67b65267517fe9964bd2d5af2e9d1a2",
+      "verification": "publisher_digest"
+    },
+    {
+      "name": "impacket-0.13.1.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/67/f2/fb8e14eb0a234b20b63a6685da2caee2c4269b3925d572a3a447b83fc9df/impacket-0.13.1.tar.gz",
+      "version": "0.13.1",
+      "sha256": "ed91c802b6beff6546afd2262942bc1a188b4671fb91ec751d46a1d66d28c2cf",
+      "repository": "PyPI/impacket",
+      "download_sha256": "ed91c802b6beff6546afd2262942bc1a188b4671fb91ec751d46a1d66d28c2cf",
+      "verification": "publisher_digest"
+    },
+    {
+      "name": "pypykatz-0.6.13.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/9e/34/b215fe85cb046080b285088a09f7c3d1a036c49c061a61e0aa4ff57ee4a6/pypykatz-0.6.13.tar.gz",
+      "version": "0.6.13",
+      "sha256": "f93d44fc393839c5daf2f061b29b81ffc576dd3391b175deb59a72956db94893",
+      "repository": "PyPI/pypykatz",
+      "download_sha256": "f93d44fc393839c5daf2f061b29b81ffc576dd3391b175deb59a72956db94893",
+      "verification": "publisher_digest"
+    },
+    {
+      "name": "suo5-source.tar.gz",
+      "url": "https://codeload.github.com/zema1/suo5/tar.gz/refs/tags/v2.2.0",
+      "version": "v2.2.0",
+      "sha256": "",
+      "repository": "zema1/suo5",
+      "download_sha256": "eb1d6570a8ec0a67a97e08cd421fd588fab22534de17c5881124e52b9450bc7b",
+      "verification": "TLS_source_and_recorded_local_digest"
+    },
+    {
+      "name": "netexec-source.tar.gz",
+      "url": "https://codeload.github.com/Pennyw0rth/NetExec/tar.gz/c7dc286ba65daf10402cdc470e531b84e6d3d911",
+      "version": "v1.5.1",
+      "sha256": "",
+      "repository": "Pennyw0rth/NetExec",
+      "download_sha256": "e6b19598554792dffb32ae9da888439e77d9af7824c3b2bd97f8182cd73b13c7",
+      "verification": "TLS_source_and_recorded_local_digest"
+    },
+    {
+      "name": "penelope-source.tar.gz",
+      "repository": "brightio/penelope",
+      "version": "0.21.0",
+      "url": "https://codeload.github.com/brightio/penelope/tar.gz/9b1cb3c86885dc45291f8475092b70041b4e14da",
+      "sha256": "",
+      "download_sha256": "beec25d6d48c3ac15ec4f04c4433e7339a486b194b7c688e68c5f98e00b00f60",
+      "verification": "TLS_source_and_recorded_local_digest"
+    }
+  ],
+  "directory_files": [
+    {
+      "path": "tools/suo5-payloads/README.md",
+      "sha256": "c3291c5130767b0efda63bfb0a2a89550eae4bc46fdb0895bc7ca2641a367a3a"
+    },
+    {
+      "path": "tools/suo5-payloads/dotnet/README.md",
+      "sha256": "69b4b2f5ca060a4168728b480e58da383f619cd223e2552977464a617c1e62fd"
+    },
+    {
+      "path": "tools/suo5-payloads/dotnet/Suo5VirtualPath.cs",
+      "sha256": "431fc86fe3ee9d68083d106315c255c6192a6b23fd92fd35dae3ede08e3bf771"
+    },
+    {
+      "path": "tools/suo5-payloads/dotnet/suo5.aspx",
+      "sha256": "6e159e3e0ee8d5dc17a26b89c985761e35f0c52c0702027b88d8c5f8135d21af"
+    },
+    {
+      "path": "tools/suo5-payloads/java/README.md",
+      "sha256": "be64d2217aa909453c30327d3dae1096c92f903094737a7d15c66f8724dfe5e7"
+    },
+    {
+      "path": "tools/suo5-payloads/java/suo5.jsp",
+      "sha256": "dce872632388cd739190e1c7ffbb48beb89d8653e44ffa805852a2857699f13f"
+    },
+    {
+      "path": "tools/suo5-payloads/nodejs/README.md",
+      "sha256": "0f7c503bbb95737ab8825a5d451978ec484cefb2b94aed5a02db2654ffafa905"
+    },
+    {
+      "path": "tools/suo5-payloads/nodejs/next_payload.http",
+      "sha256": "14b4a30c1ac12a3e4ca95675a52408880169dec9d0973919cb297dc14a5175fc"
+    },
+    {
+      "path": "tools/suo5-payloads/nodejs/suo5.js",
+      "sha256": "1dea0a79f21ff7b74e5920cc8a6dc5aa6f3955b10afe3dc586776e3dff5b0364"
+    },
+    {
+      "path": "tools/suo5-payloads/php/README.md",
+      "sha256": "e74afa53062f542a8c74e3243080eae4f5bfd169b7eabff14ff02df5959b166b"
+    },
+    {
+      "path": "tools/suo5-payloads/php/suo5.php",
+      "sha256": "fd324c46f155c49f843429171b7aeabaf93f07474c0f58f937d8d3f2666fe883"
+    },
+    {
+      "path": "tools/suo5-payloads/suo5.aspx",
+      "sha256": "6e159e3e0ee8d5dc17a26b89c985761e35f0c52c0702027b88d8c5f8135d21af"
+    },
+    {
+      "path": "tools/suo5-payloads/suo5.jsp",
+      "sha256": "dce872632388cd739190e1c7ffbb48beb89d8653e44ffa805852a2857699f13f"
+    },
+    {
+      "path": "tools/suo5-payloads/suo5.php",
+      "sha256": "fd324c46f155c49f843429171b7aeabaf93f07474c0f58f937d8d3f2666fe883"
+    },
+    {
+      "path": "tools/peass/linpeas.sh",
+      "sha256": "d01a0d9f3632fb41cfe35ef510d2b3223de6f1b44c786bd23a1d113ae4f16cef"
+    },
+    {
+      "path": "tools/peass/linpeas_linux_arm64",
+      "sha256": "2ac6e7be80c7a10b737a2f823e9a829878dd56e178599529204162988d2e85fc"
+    },
+    {
+      "path": "tools/peass/winPEAS.bat",
+      "sha256": "cd45a0db52a7a887e34622c0af501cfcd67b65267517fe9964bd2d5af2e9d1a2"
+    },
+    {
+      "path": "tools/peass/winPEASx64.exe",
+      "sha256": "892cb3eaa91695beb48cf3f26bd75d7bb3225661507ff064bee0a73261300887"
+    }
+  ],
+  "python_environments": {
+    "impacket": {
+      "freeze": [
+        "blinker==1.9.0",
+        "cffi==2.1.1",
+        "charset-normalizer==3.5.2",
+        "click==8.5.0",
+        "cryptography==50.0.2",
+        "dnspython==2.9.0",
+        "Flask==3.1.3",
+        "impacket @ file:///stage/downloads/impacket-0.13.1.tar.gz#sha256=ed91c802b6beff6546afd2262942bc1a188b4671fb91ec751d46a1d66d28c2cf",
+        "itsdangerous==2.2.0",
+        "Jinja2==3.1.6",
+        "ldap3==2.9.1",
+        "ldapdomaindump==0.10.0",
+        "MarkupSafe==3.0.4",
+        "pip==25.0.1",
+        "pyasn1==0.6.4",
+        "pyasn1_modules==0.4.2",
+        "pycparser==3.12",
+        "pycryptodomex==3.24.1",
+        "pyOpenSSL==26.4.0",
+        "six==1.17.0",
+        "typing_extensions==4.16.0",
+        "Werkzeug==3.1.9"
+      ],
+      "packages": [
+        {
+          "name": "impacket",
+          "version": "0.13.1",
+          "download": {
+            "url": "file:///stage/downloads/impacket-0.13.1.tar.gz",
+            "archive_info": {
+              "hash": "sha256=ed91c802b6beff6546afd2262942bc1a188b4671fb91ec751d46a1d66d28c2cf",
+              "hashes": {
+                "sha256": "ed91c802b6beff6546afd2262942bc1a188b4671fb91ec751d46a1d66d28c2cf"
+              }
+            }
+          }
+        },
+        {
+          "name": "Flask",
+          "version": "3.1.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/7f/9c/34f6962f9b9e9c71f6e5ed806e0d0ff03c9d1b0b2340088a0cf4bce09b18/flask-3.1.3-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c",
+              "hashes": {
+                "sha256": "f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c"
+              }
+            }
+          }
+        },
+        {
+          "name": "ldap3",
+          "version": "2.9.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/4e/f6/71d6ec9f18da0b2201287ce9db6afb1a1f637dedb3f0703409558981c723/ldap3-2.9.1-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=5869596fc4948797020d3f03b7939da938778a0f9e2009f7a072ccf92b8e8d70",
+              "hashes": {
+                "sha256": "5869596fc4948797020d3f03b7939da938778a0f9e2009f7a072ccf92b8e8d70"
+              }
+            }
+          }
+        },
+        {
+          "name": "ldapdomaindump",
+          "version": "0.10.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/8a/91/5a0015375d5bcc3667f92692e9a244803b9a0e4b651b29a5682e1647669a/ldapdomaindump-0.10.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=3797259596df7a5e1fda98388c96b1d94196f5da5551f1af1aaeedda0c9f5a11",
+              "hashes": {
+                "sha256": "3797259596df7a5e1fda98388c96b1d94196f5da5551f1af1aaeedda0c9f5a11"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyasn1",
+          "version": "0.6.4",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b",
+              "hashes": {
+                "sha256": "deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b"
+              }
+            }
+          }
+        },
+        {
+          "name": "charset-normalizer",
+          "version": "3.5.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/c9/87/2fea8c13dc24b3ca9c6f803a5b2dfdeae73eb4f9e12c7885ed908ff0433c/charset_normalizer-3.5.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=b91363207bd9dc966a691e959bb47f64b30f7ac4b072be9968b366982f7db77c",
+              "hashes": {
+                "sha256": "b91363207bd9dc966a691e959bb47f64b30f7ac4b072be9968b366982f7db77c"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyasn1_modules",
+          "version": "0.4.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a",
+              "hashes": {
+                "sha256": "29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a"
+              }
+            }
+          }
+        },
+        {
+          "name": "pycryptodomex",
+          "version": "3.24.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/3b/5f/44916f6aa08a08b34b3ce41e2282d36149aa416a8edca9dbecd7c07e0a10/pycryptodomex-3.24.1-cp37-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=9a732b9f5603b153dcdc071d6b342f192981907519827f2c1e4aeac41e2b34c2",
+              "hashes": {
+                "sha256": "9a732b9f5603b153dcdc071d6b342f192981907519827f2c1e4aeac41e2b34c2"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyOpenSSL",
+          "version": "26.4.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/51/ad/2cf6d3fa2fae5c79e1ed9960c0d42badd0f94d81dd12b50604cdc839e648/pyopenssl-26.4.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f0eb0cb2d581d3ad2b9c489468485e7f2ab6727d08401bcf9d824c3caddf3c1c",
+              "hashes": {
+                "sha256": "f0eb0cb2d581d3ad2b9c489468485e7f2ab6727d08401bcf9d824c3caddf3c1c"
+              }
+            }
+          }
+        },
+        {
+          "name": "six",
+          "version": "1.17.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+              "hashes": {
+                "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+              }
+            }
+          }
+        },
+        {
+          "name": "blinker",
+          "version": "1.9.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/10/cb/f2ad4230dc2eb1a74edf38f1a38b9b52277f75bef262d8908e60d957e13c/blinker-1.9.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc",
+              "hashes": {
+                "sha256": "ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc"
+              }
+            }
+          }
+        },
+        {
+          "name": "click",
+          "version": "8.5.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360",
+              "hashes": {
+                "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
+              }
+            }
+          }
+        },
+        {
+          "name": "cryptography",
+          "version": "50.0.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/71/37/6202e488cc1eb625ea110c292c6bda92823176e023f427d8d5660ce8d632/cryptography-50.0.2-cp311-abi3-manylinux_2_34_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=87e9ce85beb6b328ba370cc6e6aea483c92617b4c95b1d33a49297eb662bfb04",
+              "hashes": {
+                "sha256": "87e9ce85beb6b328ba370cc6e6aea483c92617b4c95b1d33a49297eb662bfb04"
+              }
+            }
+          }
+        },
+        {
+          "name": "itsdangerous",
+          "version": "2.2.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef",
+              "hashes": {
+                "sha256": "c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef"
+              }
+            }
+          }
+        },
+        {
+          "name": "Jinja2",
+          "version": "3.1.6",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+              "hashes": {
+                "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
+              }
+            }
+          }
+        },
+        {
+          "name": "MarkupSafe",
+          "version": "3.0.4",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/0d/f2/8f18e0b806eb13c1f8d07d917a720831ead54253a6dec011fbc78098a6f8/markupsafe-3.0.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=6a45c3d514f2436064db00d7fc8778d888f0236ebfed649b53d13a59e69ad51b",
+              "hashes": {
+                "sha256": "6a45c3d514f2436064db00d7fc8778d888f0236ebfed649b53d13a59e69ad51b"
+              }
+            }
+          }
+        },
+        {
+          "name": "typing_extensions",
+          "version": "4.16.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+              "hashes": {
+                "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+              }
+            }
+          }
+        },
+        {
+          "name": "Werkzeug",
+          "version": "3.1.9",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/a1/38/df03f564f43cec2684823f3cccae1a652ee7face1cbaa76fb223096e64d7/werkzeug-3.1.9-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab",
+              "hashes": {
+                "sha256": "6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab"
+              }
+            }
+          }
+        },
+        {
+          "name": "dnspython",
+          "version": "2.9.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/10/02/cdcc9b7c051786a103c3b09e1003a82fa0c66bcb91ffbdabcfbf7b4163b9/dnspython-2.9.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=9a4aedb833c3c1b49214d04d44d3032ab7a9135f7c1d29a549b4ff78fd82fda9",
+              "hashes": {
+                "sha256": "9a4aedb833c3c1b49214d04d44d3032ab7a9135f7c1d29a549b4ff78fd82fda9"
+              }
+            }
+          }
+        },
+        {
+          "name": "cffi",
+          "version": "2.1.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/44/de/f98430906df1545ffde0d543dd124a7a439bc2cd32b36b9c53f805df7333/cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890",
+              "hashes": {
+                "sha256": "68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890"
+              }
+            }
+          }
+        },
+        {
+          "name": "pycparser",
+          "version": "3.12",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
+              "hashes": {
+                "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "pypykatz": {
+      "freeze": [
+        "aesedb==0.1.8",
+        "aiosmb==0.4.14",
+        "aiowinreg==0.0.13",
+        "asn1crypto==1.5.1",
+        "asyauth==0.0.23",
+        "asysocks==0.2.18",
+        "cffi==2.1.1",
+        "colorama==0.4.6",
+        "cryptography==50.0.2",
+        "h11==0.16.0",
+        "minidump==0.0.24",
+        "minikerberos==0.4.9",
+        "msldap==0.5.15",
+        "oscrypto==1.3.0",
+        "pip==25.0.1",
+        "prompt_toolkit==3.0.53",
+        "pycparser==3.12",
+        "pycryptodomex==3.24.1",
+        "pypykatz @ file:///stage/downloads/pypykatz-0.6.13.tar.gz#sha256=f93d44fc393839c5daf2f061b29b81ffc576dd3391b175deb59a72956db94893",
+        "six==1.17.0",
+        "tabulate==0.10.0",
+        "tqdm==4.70.1",
+        "unicrypto==0.0.12",
+        "wcwidth==0.9.3",
+        "winacl==0.1.9"
+      ],
+      "packages": [
+        {
+          "name": "pypykatz",
+          "version": "0.6.13",
+          "download": {
+            "url": "file:///stage/downloads/pypykatz-0.6.13.tar.gz",
+            "archive_info": {
+              "hash": "sha256=f93d44fc393839c5daf2f061b29b81ffc576dd3391b175deb59a72956db94893",
+              "hashes": {
+                "sha256": "f93d44fc393839c5daf2f061b29b81ffc576dd3391b175deb59a72956db94893"
+              }
+            }
+          }
+        },
+        {
+          "name": "aesedb",
+          "version": "0.1.8",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/13/2e/b802e59d54a14e9cf8bda8a4fc4b5ed32568323cce7c1475bb01fdd7ab1c/aesedb-0.1.8-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=e6a3bc77ab9187d79cfeca27620ae21e331ebb66f5ea9254a136e3e29dd8b23a",
+              "hashes": {
+                "sha256": "e6a3bc77ab9187d79cfeca27620ae21e331ebb66f5ea9254a136e3e29dd8b23a"
+              }
+            }
+          }
+        },
+        {
+          "name": "aiosmb",
+          "version": "0.4.14",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/70/20/cf6e04f9615d73537a1129155870ba064af8e9005709e519ddd67301d05a/aiosmb-0.4.14-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=613e6ffc4f2c1d56e48e69943064946403a5c12d43198d9d556e4b04912c0f60",
+              "hashes": {
+                "sha256": "613e6ffc4f2c1d56e48e69943064946403a5c12d43198d9d556e4b04912c0f60"
+              }
+            }
+          }
+        },
+        {
+          "name": "aiowinreg",
+          "version": "0.0.13",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/42/37/22118ef661a287ca99d46b43e6206bca95cc7c268fa820b4334b2b66d7b7/aiowinreg-0.0.13-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=2e0809f05d62337cb2218d11dcf7ee08eb8c319382dd564293425f03cd332c9b",
+              "hashes": {
+                "sha256": "2e0809f05d62337cb2218d11dcf7ee08eb8c319382dd564293425f03cd332c9b"
+              }
+            }
+          }
+        },
+        {
+          "name": "minidump",
+          "version": "0.0.24",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/da/8b/3a148750e6d65f4fe6e249f6d0d6c497eeadd867a63ed69cee3fa17e7c83/minidump-0.0.24-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=9c016e35c8fe37c82a01b0a266f5416a0b0138934d92affb436ac2e72372bec6",
+              "hashes": {
+                "sha256": "9c016e35c8fe37c82a01b0a266f5416a0b0138934d92affb436ac2e72372bec6"
+              }
+            }
+          }
+        },
+        {
+          "name": "minikerberos",
+          "version": "0.4.9",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/90/24/ebe89493824e99be641faddb355594782b634af093866f2b19f398c60ecc/minikerberos-0.4.9-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=3c3a422541bc66719bd495f89cb6f9e149fba8f1499b9f550aa88cd9aa532ffa",
+              "hashes": {
+                "sha256": "3c3a422541bc66719bd495f89cb6f9e149fba8f1499b9f550aa88cd9aa532ffa"
+              }
+            }
+          }
+        },
+        {
+          "name": "msldap",
+          "version": "0.5.15",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/78/de/1b22d94542bb9e6145aa7ed1a8bb2bd24137140645749bbf38f3634d8da4/msldap-0.5.15-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ee4224cf3964c386a52424a4b6d763a866b4d7ae6d5597a0af58611588668531",
+              "hashes": {
+                "sha256": "ee4224cf3964c386a52424a4b6d763a866b4d7ae6d5597a0af58611588668531"
+              }
+            }
+          }
+        },
+        {
+          "name": "unicrypto",
+          "version": "0.0.12",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/f4/1c/9964cd41f3240cfcc33076f49565d583033a5628f1804bf3de7ea3d2f6bc/unicrypto-0.0.12-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=6fb7e9bbaa60c49128ad6584201290ead99b703ae834c28911c82ddca38a0d6f",
+              "hashes": {
+                "sha256": "6fb7e9bbaa60c49128ad6584201290ead99b703ae834c28911c82ddca38a0d6f"
+              }
+            }
+          }
+        },
+        {
+          "name": "winacl",
+          "version": "0.1.9",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/64/82/9be45ef89488ad87870da83271cb734f410373ca86dde76d6907d74cf0e0/winacl-0.1.9-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=31ba781a35f3b1bd3c2ece994816c0a5fe113c73018689ab6118010ac0d15099",
+              "hashes": {
+                "sha256": "31ba781a35f3b1bd3c2ece994816c0a5fe113c73018689ab6118010ac0d15099"
+              }
+            }
+          }
+        },
+        {
+          "name": "tqdm",
+          "version": "4.70.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73",
+              "hashes": {
+                "sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73"
+              }
+            }
+          }
+        },
+        {
+          "name": "asn1crypto",
+          "version": "1.5.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/c9/7f/09065fd9e27da0eda08b4d6897f1c13535066174cc023af248fc2a8d5e5a/asn1crypto-1.5.1-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67",
+              "hashes": {
+                "sha256": "db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67"
+              }
+            }
+          }
+        },
+        {
+          "name": "asyauth",
+          "version": "0.0.23",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/26/ca/6d909a8bfff38ad3c1477d502c7ebf61288ac790d16eeb8bfbe2dcfcb4f0/asyauth-0.0.23-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=bbca62d10c4b0d2585103791d7451adda325c3d654114253638456fe84d39b0e",
+              "hashes": {
+                "sha256": "bbca62d10c4b0d2585103791d7451adda325c3d654114253638456fe84d39b0e"
+              }
+            }
+          }
+        },
+        {
+          "name": "asysocks",
+          "version": "0.2.18",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/71/b5/abf85f5444b264bf9f943eb1f6f577ebf3af34c8c4f66c1629d1f063eaa0/asysocks-0.2.18-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a881536456d922a9fde44031aba262bc34ee39a9d14749ded1e8a4820602a37d",
+              "hashes": {
+                "sha256": "a881536456d922a9fde44031aba262bc34ee39a9d14749ded1e8a4820602a37d"
+              }
+            }
+          }
+        },
+        {
+          "name": "cryptography",
+          "version": "50.0.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/71/37/6202e488cc1eb625ea110c292c6bda92823176e023f427d8d5660ce8d632/cryptography-50.0.2-cp311-abi3-manylinux_2_34_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=87e9ce85beb6b328ba370cc6e6aea483c92617b4c95b1d33a49297eb662bfb04",
+              "hashes": {
+                "sha256": "87e9ce85beb6b328ba370cc6e6aea483c92617b4c95b1d33a49297eb662bfb04"
+              }
+            }
+          }
+        },
+        {
+          "name": "oscrypto",
+          "version": "1.3.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/01/7c/fa07d3da2b6253eb8474be16eab2eadf670460e364ccc895ca7ff388ee30/oscrypto-1.3.0-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=2b2f1d2d42ec152ca90ccb5682f3e051fb55986e1b170ebde472b133713e7085",
+              "hashes": {
+                "sha256": "2b2f1d2d42ec152ca90ccb5682f3e051fb55986e1b170ebde472b133713e7085"
+              }
+            }
+          }
+        },
+        {
+          "name": "prompt_toolkit",
+          "version": "3.0.53",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/54/6f/84908cad2d6aa5144abcf7b42709fe4fdb459bc640ec7ac5786e7693dabc/prompt_toolkit-3.0.53-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2",
+              "hashes": {
+                "sha256": "01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2"
+              }
+            }
+          }
+        },
+        {
+          "name": "wcwidth",
+          "version": "0.9.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/ea/7a/4e26574d032a1709bb1fd7d95d406b7b8f87363c60305a101e6e2d9285f5/wcwidth-0.9.3-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=c12abd75ffcbad417e7770a6feb82413c102ccce5c435068c39a82e2218b00b3",
+              "hashes": {
+                "sha256": "c12abd75ffcbad417e7770a6feb82413c102ccce5c435068c39a82e2218b00b3"
+              }
+            }
+          }
+        },
+        {
+          "name": "colorama",
+          "version": "0.4.6",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+              "hashes": {
+                "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"
+              }
+            }
+          }
+        },
+        {
+          "name": "pycryptodomex",
+          "version": "3.24.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/3b/5f/44916f6aa08a08b34b3ce41e2282d36149aa416a8edca9dbecd7c07e0a10/pycryptodomex-3.24.1-cp37-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=9a732b9f5603b153dcdc071d6b342f192981907519827f2c1e4aeac41e2b34c2",
+              "hashes": {
+                "sha256": "9a732b9f5603b153dcdc071d6b342f192981907519827f2c1e4aeac41e2b34c2"
+              }
+            }
+          }
+        },
+        {
+          "name": "six",
+          "version": "1.17.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+              "hashes": {
+                "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+              }
+            }
+          }
+        },
+        {
+          "name": "tabulate",
+          "version": "0.10.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3",
+              "hashes": {
+                "sha256": "f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3"
+              }
+            }
+          }
+        },
+        {
+          "name": "cffi",
+          "version": "2.1.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/44/de/f98430906df1545ffde0d543dd124a7a439bc2cd32b36b9c53f805df7333/cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890",
+              "hashes": {
+                "sha256": "68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890"
+              }
+            }
+          }
+        },
+        {
+          "name": "h11",
+          "version": "0.16.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+              "hashes": {
+                "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+              }
+            }
+          }
+        },
+        {
+          "name": "pycparser",
+          "version": "3.12",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
+              "hashes": {
+                "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "nxc": {
+      "freeze": [
+        "aardwolf==0.2.16",
+        "aesedb==0.1.8",
+        "aiosmb==0.4.14",
+        "aiowinreg==0.0.13",
+        "anyio==4.15.1",
+        "arc4==0.5.0",
+        "argcomplete==3.6.3",
+        "asn1crypto==1.5.1",
+        "asn1tools==0.169.0",
+        "asyauth==0.0.23",
+        "asysocks==0.2.18",
+        "bcrypt==5.0.0",
+        "beautifulsoup4==4.13.5",
+        "bitstruct==8.24.0",
+        "blinker==1.9.0",
+        "bloodhound-ce==1.9.1",
+        "certifi==2026.10.23",
+        "certipy-ad @ git+https://github.com/Pennyw0rth/Certipy@017dab8ff4d4447976b2a0c2b2203fd61b888681",
+        "cffi==2.1.1",
+        "charset-normalizer==3.5.2",
+        "click==8.5.0",
+        "colorama==0.4.6",
+        "cryptography==42.0.8",
+        "dnspython==2.7.0",
+        "dploot==4.1.2",
+        "dsinternals==1.2.5",
+        "Flask==3.1.3",
+        "h11==0.16.0",
+        "httpcore==1.0.9",
+        "httpx==0.28.1",
+        "idna==3.20",
+        "impacket @ git+https://github.com/fortra/impacket@caba5facdd3a01b5d0decc6daf5871839f22f792",
+        "invoke==3.0.3",
+        "itsdangerous==2.2.0",
+        "Jinja2==3.1.6",
+        "jwt==1.4.0",
+        "ldap3==2.9.1",
+        "ldapdomaindump==0.10.0",
+        "lsassy==3.1.16",
+        "lxml==6.1.3",
+        "markdown-it-py==4.2.0",
+        "MarkupSafe==3.0.4",
+        "masky==0.2.1",
+        "mdurl==0.1.2",
+        "minidump==0.0.24",
+        "minikerberos==0.4.9",
+        "msldap==0.5.15",
+        "neo4j==6.4.1",
+        "netaddr==1.3.0",
+        "netexec @ file:///stage/sources/netexec",
+        "oscrypto @ git+https://github.com/wbond/oscrypto@1547f535001ba568b239b8797465536759c742a3",
+        "paramiko==5.1.0",
+        "pefile==2024.8.26",
+        "pillow==13.0.0",
+        "pip==25.0.1",
+        "prompt_toolkit==3.0.53",
+        "pyasn1==0.6.4",
+        "pyasn1_modules==0.4.2",
+        "pycparser==3.12",
+        "pycryptodome==3.22.0",
+        "pycryptodomex==3.24.1",
+        "Pygments==2.21.0",
+        "pylnk3==0.4.3",
+        "PyNaCl==1.6.2",
+        "pyNfsClient @ git+https://github.com/Pennyw0rth/NfsClient@9b61e0a6385743923ccffa6a80f8dbbf0714121d",
+        "pyOpenSSL==24.0.0",
+        "pyparsing==3.3.3",
+        "pyperclip==1.11.0",
+        "pypsrp==0.9.1",
+        "pypykatz==0.6.13",
+        "pyspnego==0.12.4",
+        "python-dateutil==3.0.0",
+        "python-libnmap==0.7.3",
+        "pytz==2026.5",
+        "questionary==2.1.1",
+        "requests==2.32.5",
+        "rich==15.0.0",
+        "setuptools==84.2.1",
+        "six==1.17.0",
+        "soupsieve==3.0.4",
+        "SQLAlchemy==2.1.6",
+        "tabulate==0.10.0",
+        "termcolor==3.3.0",
+        "terminaltables==3.1.10",
+        "tqdm==4.70.1",
+        "typing_extensions==4.16.0",
+        "tzdata==2026.5",
+        "unicrypto==0.0.12",
+        "urllib3==2.8.0",
+        "wcwidth==0.9.3",
+        "Werkzeug==3.1.9",
+        "winacl==0.1.9",
+        "xmltodict==1.0.4"
+      ],
+      "packages": [
+        {
+          "name": "netexec",
+          "version": "1.5.1",
+          "download": {
+            "url": "file:///stage/sources/netexec",
+            "dir_info": {}
+          }
+        },
+        {
+          "name": "aardwolf",
+          "version": "0.2.16",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/71/0f/79f2acb31e1144a3895d17ad9136272d2b75ed3bd24eb1c415129d5e089d/aardwolf-0.2.16.tar.gz",
+            "archive_info": {
+              "hash": "sha256=52cba79817af963108dcd39e82513deec742387f2fab01a9138abe56f94e7ad2",
+              "hashes": {
+                "sha256": "52cba79817af963108dcd39e82513deec742387f2fab01a9138abe56f94e7ad2"
+              }
+            }
+          }
+        },
+        {
+          "name": "asyauth",
+          "version": "0.0.23",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/26/ca/6d909a8bfff38ad3c1477d502c7ebf61288ac790d16eeb8bfbe2dcfcb4f0/asyauth-0.0.23-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=bbca62d10c4b0d2585103791d7451adda325c3d654114253638456fe84d39b0e",
+              "hashes": {
+                "sha256": "bbca62d10c4b0d2585103791d7451adda325c3d654114253638456fe84d39b0e"
+              }
+            }
+          }
+        },
+        {
+          "name": "bloodhound-ce",
+          "version": "1.9.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/f1/2b/6905e28beed94e06faec90a4d33bea746735334d48e9b1f8f6377c406938/bloodhound_ce-1.9.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=bb3bd6fb67b9337c738d4168b4f712b0d5544bb543c7405cc27977e61f67bab6",
+              "hashes": {
+                "sha256": "bb3bd6fb67b9337c738d4168b4f712b0d5544bb543c7405cc27977e61f67bab6"
+              }
+            }
+          }
+        },
+        {
+          "name": "dploot",
+          "version": "4.1.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/2d/d3/a70937dbbf3c1c6308759f40f5ac8734e812f960bfdffc692e9a506bfc89/dploot-4.1.2-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=fd192f9486b6a3ec2ec97dad3ae7d0cb7e37d948433fdbc3e43d4e6331cbeaae",
+              "hashes": {
+                "sha256": "fd192f9486b6a3ec2ec97dad3ae7d0cb7e37d948433fdbc3e43d4e6331cbeaae"
+              }
+            }
+          }
+        },
+        {
+          "name": "dsinternals",
+          "version": "1.2.5",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/f0/29/41a6937ecc61812d09b9177a09c6f4a3edc499c0e227180d572a23e24e7b/dsinternals-1.2.5-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=25c544558381a86644fc6ef3b131f2a7450675b35e324553cb414b696d86d7bd",
+              "hashes": {
+                "sha256": "25c544558381a86644fc6ef3b131f2a7450675b35e324553cb414b696d86d7bd"
+              }
+            }
+          }
+        },
+        {
+          "name": "impacket",
+          "version": "0.14.0.dev0+20251203.31101.caba5fac",
+          "download": {
+            "url": "https://github.com/fortra/impacket",
+            "vcs_info": {
+              "vcs": "git",
+              "requested_revision": "caba5facdd3a01b5d0decc6daf5871839f22f792",
+              "commit_id": "caba5facdd3a01b5d0decc6daf5871839f22f792"
+            }
+          }
+        },
+        {
+          "name": "jwt",
+          "version": "1.4.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b9/80/34e3fae850adb0b7b8b9b1cf02b2d975fcb68e0e8eb7d56d6b4fc23f7433/jwt-1.4.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=7560a7f1de4f90de94ac645ee0303ac60c95b9e08e058fb69f6c330f71d71b11",
+              "hashes": {
+                "sha256": "7560a7f1de4f90de94ac645ee0303ac60c95b9e08e058fb69f6c330f71d71b11"
+              }
+            }
+          }
+        },
+        {
+          "name": "lsassy",
+          "version": "3.1.16",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/17/4b/f868491fee8116986e8416ffb36a1d8b12c907ed7f7e9a6339b84b0154aa/lsassy-3.1.16-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=e2672e193815db96ddb3078c6bda1c3e96d425a1072690bf8b8fc17b417c8c2e",
+              "hashes": {
+                "sha256": "e2672e193815db96ddb3078c6bda1c3e96d425a1072690bf8b8fc17b417c8c2e"
+              }
+            }
+          }
+        },
+        {
+          "name": "masky",
+          "version": "0.2.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/9b/e1/4986c6c786d2ba8475c0344c9fa6a060050f9d4d029141b135d44ed5210e/masky-0.2.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=bcf545f5e2b762fc49df2f29aa934498bb5dd37ba0a28e0c1683acee2e5ef14b",
+              "hashes": {
+                "sha256": "bcf545f5e2b762fc49df2f29aa934498bb5dd37ba0a28e0c1683acee2e5ef14b"
+              }
+            }
+          }
+        },
+        {
+          "name": "minikerberos",
+          "version": "0.4.9",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/90/24/ebe89493824e99be641faddb355594782b634af093866f2b19f398c60ecc/minikerberos-0.4.9-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=3c3a422541bc66719bd495f89cb6f9e149fba8f1499b9f550aa88cd9aa532ffa",
+              "hashes": {
+                "sha256": "3c3a422541bc66719bd495f89cb6f9e149fba8f1499b9f550aa88cd9aa532ffa"
+              }
+            }
+          }
+        },
+        {
+          "name": "neo4j",
+          "version": "6.4.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/07/69/3036bdcacfba561c6ef4b00fe72529e0a1b6241a6b2de82572a0940a276b/neo4j-6.4.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f56a281c74355522fc2642df8919bec450115431531b8f3f6fe1cc17acb57a27",
+              "hashes": {
+                "sha256": "f56a281c74355522fc2642df8919bec450115431531b8f3f6fe1cc17acb57a27"
+              }
+            }
+          }
+        },
+        {
+          "name": "oscrypto",
+          "version": "1.3.0",
+          "download": {
+            "url": "https://github.com/wbond/oscrypto",
+            "vcs_info": {
+              "vcs": "git",
+              "requested_revision": "1547f535001ba568b239b8797465536759c742a3",
+              "commit_id": "1547f535001ba568b239b8797465536759c742a3"
+            }
+          }
+        },
+        {
+          "name": "paramiko",
+          "version": "5.1.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/13/45/fa0e8d70cb25d2dae06bc238e580a84834f6ca53a4e2408cccc19a78db7b/paramiko-5.1.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=d9fe6d67a9d0bbf3eb85b051d26ab850b678c02d060f32915b944e5ca6d0d9e1",
+              "hashes": {
+                "sha256": "d9fe6d67a9d0bbf3eb85b051d26ab850b678c02d060f32915b944e5ca6d0d9e1"
+              }
+            }
+          }
+        },
+        {
+          "name": "pefile",
+          "version": "2024.8.26",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/54/16/12b82f791c7f50ddec566873d5bdd245baa1491bac11d15ffb98aecc8f8b/pefile-2024.8.26-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f",
+              "hashes": {
+                "sha256": "76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyasn1_modules",
+          "version": "0.4.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a",
+              "hashes": {
+                "sha256": "29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a"
+              }
+            }
+          }
+        },
+        {
+          "name": "pylnk3",
+          "version": "0.4.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/31/86/ed659fbdce3befc0ad059e7c8186b9fceff5b9301122a3930016747b2f9d/pylnk3-0.4.3-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=fafa9293290163fed30541fb38f7df21a0e3f6fcc8324597a898ce694c9a593d",
+              "hashes": {
+                "sha256": "fafa9293290163fed30541fb38f7df21a0e3f6fcc8324597a898ce694c9a593d"
+              }
+            }
+          }
+        },
+        {
+          "name": "pypsrp",
+          "version": "0.9.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/d1/6b/441a1ebd4a5975566b0d32be477cd6ec65e3962938e82ed499690ac82e1c/pypsrp-0.9.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=1217b03397589f8e77c98dc9d2a4af2abc34a89ccc15efd4b6758ec76eb1bb7d",
+              "hashes": {
+                "sha256": "1217b03397589f8e77c98dc9d2a4af2abc34a89ccc15efd4b6758ec76eb1bb7d"
+              }
+            }
+          }
+        },
+        {
+          "name": "pypykatz",
+          "version": "0.6.13",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/99/e1/d56d0f65a572b2cdce100207aa0dc07f68f3a8897fa9941cd69b51d476f6/pypykatz-0.6.13-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=c715fc22af49b893dc15e4e376ff167107ad602e1f91a5a2320c3aa7a7e41e3c",
+              "hashes": {
+                "sha256": "c715fc22af49b893dc15e4e376ff167107ad602e1f91a5a2320c3aa7a7e41e3c"
+              }
+            }
+          }
+        },
+        {
+          "name": "python-dateutil",
+          "version": "3.0.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/5a/17/cebee01d1c0c1441174cf0456ddc91b280d79acb65340c05e41d77866ee8/python_dateutil-3.0.0-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd",
+              "hashes": {
+                "sha256": "3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd"
+              }
+            }
+          }
+        },
+        {
+          "name": "python-libnmap",
+          "version": "0.7.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/f0/b2/38e34576a715115e5bef9eff7d9989d48079c8138e5bb1d71bb8001df722/python-libnmap-0.7.3.tar.gz",
+            "archive_info": {
+              "hash": "sha256=d03629256c2ee9ab37390c28d4c4c2ae9637cd0861dd8ab9e0f32779545936c0",
+              "hashes": {
+                "sha256": "d03629256c2ee9ab37390c28d4c4c2ae9637cd0861dd8ab9e0f32779545936c0"
+              }
+            }
+          }
+        },
+        {
+          "name": "rich",
+          "version": "15.0.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb",
+              "hashes": {
+                "sha256": "33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
+              }
+            }
+          }
+        },
+        {
+          "name": "SQLAlchemy",
+          "version": "2.1.6",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/07/05/45e6e2bae7c11e7dbaeb0e9205d92b1b12583b7e199eb2503a7a603f3b9f/sqlalchemy-2.1.6-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=1b5885ad1226c8eeea6aeabb4c4036e43202e1bd70cc7a50ece98bcd6ebe5566",
+              "hashes": {
+                "sha256": "1b5885ad1226c8eeea6aeabb4c4036e43202e1bd70cc7a50ece98bcd6ebe5566"
+              }
+            }
+          }
+        },
+        {
+          "name": "termcolor",
+          "version": "3.3.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/33/d1/8bb87d21e9aeb323cc03034f5eaf2c8f69841e40e4853c2627edf8111ed3/termcolor-3.3.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5",
+              "hashes": {
+                "sha256": "cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5"
+              }
+            }
+          }
+        },
+        {
+          "name": "terminaltables",
+          "version": "3.1.10",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/c4/fb/ea621e0a19733e01fe4005d46087d383693c0f4a8f824b47d8d4122c87e0/terminaltables-3.1.10-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=e4fdc4179c9e4aab5f674d80f09d76fa436b96fdc698a8505e0a36bf0804a874",
+              "hashes": {
+                "sha256": "e4fdc4179c9e4aab5f674d80f09d76fa436b96fdc698a8505e0a36bf0804a874"
+              }
+            }
+          }
+        },
+        {
+          "name": "xmltodict",
+          "version": "1.0.4",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/38/34/98a2f52245f4d47be93b580dae5f9861ef58977d73a79eb47c58f1ad1f3a/xmltodict-1.0.4-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a4a00d300b0e1c59fc2bfccb53d7b2e88c32f200df138a0dd2229f842497026a",
+              "hashes": {
+                "sha256": "a4a00d300b0e1c59fc2bfccb53d7b2e88c32f200df138a0dd2229f842497026a"
+              }
+            }
+          }
+        },
+        {
+          "name": "certipy-ad",
+          "version": "5.0.3",
+          "download": {
+            "url": "https://github.com/Pennyw0rth/Certipy",
+            "vcs_info": {
+              "vcs": "git",
+              "requested_revision": "017dab8ff4d4447976b2a0c2b2203fd61b888681",
+              "commit_id": "017dab8ff4d4447976b2a0c2b2203fd61b888681"
+            }
+          }
+        },
+        {
+          "name": "argcomplete",
+          "version": "3.6.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/74/f5/9373290775639cb67a2fce7f629a1c240dce9f12fe927bc32b2736e16dfc/argcomplete-3.6.3-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f5007b3a600ccac5d25bbce33089211dfd49eab4a7718da3f10e3082525a92ce",
+              "hashes": {
+                "sha256": "f5007b3a600ccac5d25bbce33089211dfd49eab4a7718da3f10e3082525a92ce"
+              }
+            }
+          }
+        },
+        {
+          "name": "beautifulsoup4",
+          "version": "4.13.5",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/04/eb/f4151e0c7377a6e08a38108609ba5cede57986802757848688aeedd1b9e8/beautifulsoup4-4.13.5-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=642085eaa22233aceadff9c69651bc51e8bf3f874fb6d7104ece2beb24b47c4a",
+              "hashes": {
+                "sha256": "642085eaa22233aceadff9c69651bc51e8bf3f874fb6d7104ece2beb24b47c4a"
+              }
+            }
+          }
+        },
+        {
+          "name": "requests",
+          "version": "2.32.5",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6",
+              "hashes": {
+                "sha256": "2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyNfsClient",
+          "version": "0.1.5",
+          "download": {
+            "url": "https://github.com/Pennyw0rth/NfsClient",
+            "vcs_info": {
+              "vcs": "git",
+              "requested_revision": "9b61e0a6385743923ccffa6a80f8dbbf0714121d",
+              "commit_id": "9b61e0a6385743923ccffa6a80f8dbbf0714121d"
+            }
+          }
+        },
+        {
+          "name": "aesedb",
+          "version": "0.1.8",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/13/2e/b802e59d54a14e9cf8bda8a4fc4b5ed32568323cce7c1475bb01fdd7ab1c/aesedb-0.1.8-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=e6a3bc77ab9187d79cfeca27620ae21e331ebb66f5ea9254a136e3e29dd8b23a",
+              "hashes": {
+                "sha256": "e6a3bc77ab9187d79cfeca27620ae21e331ebb66f5ea9254a136e3e29dd8b23a"
+              }
+            }
+          }
+        },
+        {
+          "name": "aiosmb",
+          "version": "0.4.14",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/70/20/cf6e04f9615d73537a1129155870ba064af8e9005709e519ddd67301d05a/aiosmb-0.4.14-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=613e6ffc4f2c1d56e48e69943064946403a5c12d43198d9d556e4b04912c0f60",
+              "hashes": {
+                "sha256": "613e6ffc4f2c1d56e48e69943064946403a5c12d43198d9d556e4b04912c0f60"
+              }
+            }
+          }
+        },
+        {
+          "name": "aiowinreg",
+          "version": "0.0.13",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/42/37/22118ef661a287ca99d46b43e6206bca95cc7c268fa820b4334b2b66d7b7/aiowinreg-0.0.13-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=2e0809f05d62337cb2218d11dcf7ee08eb8c319382dd564293425f03cd332c9b",
+              "hashes": {
+                "sha256": "2e0809f05d62337cb2218d11dcf7ee08eb8c319382dd564293425f03cd332c9b"
+              }
+            }
+          }
+        },
+        {
+          "name": "arc4",
+          "version": "0.5.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b6/f0/881da69973abadac6848d27a0bf070b107ed5547ddbd1b092c30ab4c8b7c/arc4-0.5.0.tar.gz",
+            "archive_info": {
+              "hash": "sha256=259d4e505766639b7245d7199f3b4e72134d7adf20196820ffd3015954d85955",
+              "hashes": {
+                "sha256": "259d4e505766639b7245d7199f3b4e72134d7adf20196820ffd3015954d85955"
+              }
+            }
+          }
+        },
+        {
+          "name": "asn1crypto",
+          "version": "1.5.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/c9/7f/09065fd9e27da0eda08b4d6897f1c13535066174cc023af248fc2a8d5e5a/asn1crypto-1.5.1-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67",
+              "hashes": {
+                "sha256": "db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67"
+              }
+            }
+          }
+        },
+        {
+          "name": "asysocks",
+          "version": "0.2.18",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/71/b5/abf85f5444b264bf9f943eb1f6f577ebf3af34c8c4f66c1629d1f063eaa0/asysocks-0.2.18-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a881536456d922a9fde44031aba262bc34ee39a9d14749ded1e8a4820602a37d",
+              "hashes": {
+                "sha256": "a881536456d922a9fde44031aba262bc34ee39a9d14749ded1e8a4820602a37d"
+              }
+            }
+          }
+        },
+        {
+          "name": "bcrypt",
+          "version": "5.0.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/ac/31/79f11865f8078e192847d2cb526e3fa27c200933c982c5b2869720fa5fce/bcrypt-5.0.0-cp39-abi3-manylinux_2_34_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=edfcdcedd0d0f05850c52ba3127b1fce70b9f89e0fe5ff16517df7e81fa3cbb8",
+              "hashes": {
+                "sha256": "edfcdcedd0d0f05850c52ba3127b1fce70b9f89e0fe5ff16517df7e81fa3cbb8"
+              }
+            }
+          }
+        },
+        {
+          "name": "certifi",
+          "version": "2026.10.23",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1",
+              "hashes": {
+                "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1"
+              }
+            }
+          }
+        },
+        {
+          "name": "charset-normalizer",
+          "version": "3.5.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/c9/87/2fea8c13dc24b3ca9c6f803a5b2dfdeae73eb4f9e12c7885ed908ff0433c/charset_normalizer-3.5.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=b91363207bd9dc966a691e959bb47f64b30f7ac4b072be9968b366982f7db77c",
+              "hashes": {
+                "sha256": "b91363207bd9dc966a691e959bb47f64b30f7ac4b072be9968b366982f7db77c"
+              }
+            }
+          }
+        },
+        {
+          "name": "cryptography",
+          "version": "42.0.8",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/5f/f9/c3d4f19b82bdb25a3d857fe96e7e571c981810e47e3f299cc13ac429066a/cryptography-42.0.8-cp39-abi3-manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=dc0fdf6787f37b1c6b08e6dfc892d9d068b5bdb671198c72072828b80bd5fe4c",
+              "hashes": {
+                "sha256": "dc0fdf6787f37b1c6b08e6dfc892d9d068b5bdb671198c72072828b80bd5fe4c"
+              }
+            }
+          }
+        },
+        {
+          "name": "dnspython",
+          "version": "2.7.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/68/1b/e0a87d256e40e8c888847551b20a017a6b98139178505dc7ffb96f04e954/dnspython-2.7.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=b4c34b7d10b51bcc3a5071e7b8dee77939f1e878477eeecc965e9835f63c6c86",
+              "hashes": {
+                "sha256": "b4c34b7d10b51bcc3a5071e7b8dee77939f1e878477eeecc965e9835f63c6c86"
+              }
+            }
+          }
+        },
+        {
+          "name": "Flask",
+          "version": "3.1.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/7f/9c/34f6962f9b9e9c71f6e5ed806e0d0ff03c9d1b0b2340088a0cf4bce09b18/flask-3.1.3-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c",
+              "hashes": {
+                "sha256": "f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c"
+              }
+            }
+          }
+        },
+        {
+          "name": "httpx",
+          "version": "0.28.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad",
+              "hashes": {
+                "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
+              }
+            }
+          }
+        },
+        {
+          "name": "httpcore",
+          "version": "1.0.9",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55",
+              "hashes": {
+                "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
+              }
+            }
+          }
+        },
+        {
+          "name": "idna",
+          "version": "3.20",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+              "hashes": {
+                "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+              }
+            }
+          }
+        },
+        {
+          "name": "invoke",
+          "version": "3.0.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/5a/de/bbc12563bbf979618d17625a4e753ff7a078523e28d870d3626daa97261a/invoke-3.0.3-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053",
+              "hashes": {
+                "sha256": "f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053"
+              }
+            }
+          }
+        },
+        {
+          "name": "ldap3",
+          "version": "2.9.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/4e/f6/71d6ec9f18da0b2201287ce9db6afb1a1f637dedb3f0703409558981c723/ldap3-2.9.1-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=5869596fc4948797020d3f03b7939da938778a0f9e2009f7a072ccf92b8e8d70",
+              "hashes": {
+                "sha256": "5869596fc4948797020d3f03b7939da938778a0f9e2009f7a072ccf92b8e8d70"
+              }
+            }
+          }
+        },
+        {
+          "name": "ldapdomaindump",
+          "version": "0.10.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/8a/91/5a0015375d5bcc3667f92692e9a244803b9a0e4b651b29a5682e1647669a/ldapdomaindump-0.10.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=3797259596df7a5e1fda98388c96b1d94196f5da5551f1af1aaeedda0c9f5a11",
+              "hashes": {
+                "sha256": "3797259596df7a5e1fda98388c96b1d94196f5da5551f1af1aaeedda0c9f5a11"
+              }
+            }
+          }
+        },
+        {
+          "name": "lxml",
+          "version": "6.1.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/a3/a0/a1f7f1313795bfec67b77f01ef3b1128d49f2d7f66a8413fa55d47f4e25f/lxml-6.1.3-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=b37772102d44bb6628186accca3a121b1fa3a6b3d97518a8c29a5229ca4c0d0a",
+              "hashes": {
+                "sha256": "b37772102d44bb6628186accca3a121b1fa3a6b3d97518a8c29a5229ca4c0d0a"
+              }
+            }
+          }
+        },
+        {
+          "name": "markdown-it-py",
+          "version": "4.2.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a",
+              "hashes": {
+                "sha256": "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
+              }
+            }
+          }
+        },
+        {
+          "name": "minidump",
+          "version": "0.0.24",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/da/8b/3a148750e6d65f4fe6e249f6d0d6c497eeadd867a63ed69cee3fa17e7c83/minidump-0.0.24-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=9c016e35c8fe37c82a01b0a266f5416a0b0138934d92affb436ac2e72372bec6",
+              "hashes": {
+                "sha256": "9c016e35c8fe37c82a01b0a266f5416a0b0138934d92affb436ac2e72372bec6"
+              }
+            }
+          }
+        },
+        {
+          "name": "msldap",
+          "version": "0.5.15",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/78/de/1b22d94542bb9e6145aa7ed1a8bb2bd24137140645749bbf38f3634d8da4/msldap-0.5.15-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ee4224cf3964c386a52424a4b6d763a866b4d7ae6d5597a0af58611588668531",
+              "hashes": {
+                "sha256": "ee4224cf3964c386a52424a4b6d763a866b4d7ae6d5597a0af58611588668531"
+              }
+            }
+          }
+        },
+        {
+          "name": "netaddr",
+          "version": "1.3.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/12/cc/f4fe2c7ce68b92cbf5b2d379ca366e1edae38cccaad00f69f529b460c3ef/netaddr-1.3.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=c2c6a8ebe5554ce33b7d5b3a306b71bbb373e000bbbf2350dd5213cc56e3dbbe",
+              "hashes": {
+                "sha256": "c2c6a8ebe5554ce33b7d5b3a306b71bbb373e000bbbf2350dd5213cc56e3dbbe"
+              }
+            }
+          }
+        },
+        {
+          "name": "pillow",
+          "version": "13.0.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/3b/bb/9e30e8ed18c20800ee327a12107d5249ad8dc444867b3adfcc21654e3c71/pillow-13.0.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d",
+              "hashes": {
+                "sha256": "8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyasn1",
+          "version": "0.6.4",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b",
+              "hashes": {
+                "sha256": "deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b"
+              }
+            }
+          }
+        },
+        {
+          "name": "pycryptodome",
+          "version": "3.22.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/cc/7f/cc5d6da0dbc36acd978d80a72b228e33aadaec9c4f91c93221166d8bdc05/pycryptodome-3.22.0-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=a31fa5914b255ab62aac9265654292ce0404f6b66540a065f538466474baedbc",
+              "hashes": {
+                "sha256": "a31fa5914b255ab62aac9265654292ce0404f6b66540a065f538466474baedbc"
+              }
+            }
+          }
+        },
+        {
+          "name": "Pygments",
+          "version": "2.21.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9",
+              "hashes": {
+                "sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9"
+              }
+            }
+          }
+        },
+        {
+          "name": "PyNaCl",
+          "version": "1.6.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/c4/58/fc6e649762b029315325ace1a8c6be66125e42f67416d3dbd47b69563d61/pynacl-1.6.2-cp38-abi3-manylinux_2_34_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=26bfcd00dcf2cf160f122186af731ae30ab120c18e8375684ec2670dccd28130",
+              "hashes": {
+                "sha256": "26bfcd00dcf2cf160f122186af731ae30ab120c18e8375684ec2670dccd28130"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyOpenSSL",
+          "version": "24.0.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/3f/0e/c6656e62d9424d9c9f14b27be27220602f4af1e64b77f2c86340b671d439/pyOpenSSL-24.0.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ba07553fb6fd6a7a2259adb9b84e12302a9a8a75c44046e8bb5d3e5ee887e3c3",
+              "hashes": {
+                "sha256": "ba07553fb6fd6a7a2259adb9b84e12302a9a8a75c44046e8bb5d3e5ee887e3c3"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyperclip",
+          "version": "1.11.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/df/80/fc9d01d5ed37ba4c42ca2b55b4339ae6e200b456be3a1aaddf4a9fa99b8c/pyperclip-1.11.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=299403e9ff44581cb9ba2ffeed69c7aa96a008622ad0c46cb575ca75b5b84273",
+              "hashes": {
+                "sha256": "299403e9ff44581cb9ba2ffeed69c7aa96a008622ad0c46cb575ca75b5b84273"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyspnego",
+          "version": "0.12.4",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/eb/4e/f6c1bb147890f246c3a24ce836be4f6cfc44fd7be08e0a229e3a1c08b560/pyspnego-0.12.4-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a29a34de1abe9e9b30d9aa1d363f8e49fc159eb7355b1f2ee86ccb3a2ce3bba9",
+              "hashes": {
+                "sha256": "a29a34de1abe9e9b30d9aa1d363f8e49fc159eb7355b1f2ee86ccb3a2ce3bba9"
+              }
+            }
+          }
+        },
+        {
+          "name": "questionary",
+          "version": "2.1.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/3c/26/1062c7ec1b053db9e499b4d2d5bc231743201b74051c973dadeac80a8f43/questionary-2.1.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a51af13f345f1cdea62347589fbb6df3b290306ab8930713bfae4d475a7d4a59",
+              "hashes": {
+                "sha256": "a51af13f345f1cdea62347589fbb6df3b290306ab8930713bfae4d475a7d4a59"
+              }
+            }
+          }
+        },
+        {
+          "name": "six",
+          "version": "1.17.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+              "hashes": {
+                "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+              }
+            }
+          }
+        },
+        {
+          "name": "soupsieve",
+          "version": "3.0.4",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/07/66/473f7ca0be0b06e38ee8c85ee2db184e3981bd769fac2e7c19c8a8865211/soupsieve-3.0.4-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=8412826614f9c632227067d0985aeb9f584bd15efc852955430e097a9fe7afbf",
+              "hashes": {
+                "sha256": "8412826614f9c632227067d0985aeb9f584bd15efc852955430e097a9fe7afbf"
+              }
+            }
+          }
+        },
+        {
+          "name": "typing_extensions",
+          "version": "4.16.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+              "hashes": {
+                "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+              }
+            }
+          }
+        },
+        {
+          "name": "unicrypto",
+          "version": "0.0.12",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/f4/1c/9964cd41f3240cfcc33076f49565d583033a5628f1804bf3de7ea3d2f6bc/unicrypto-0.0.12-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=6fb7e9bbaa60c49128ad6584201290ead99b703ae834c28911c82ddca38a0d6f",
+              "hashes": {
+                "sha256": "6fb7e9bbaa60c49128ad6584201290ead99b703ae834c28911c82ddca38a0d6f"
+              }
+            }
+          }
+        },
+        {
+          "name": "urllib3",
+          "version": "2.8.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+              "hashes": {
+                "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
+              }
+            }
+          }
+        },
+        {
+          "name": "winacl",
+          "version": "0.1.9",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/64/82/9be45ef89488ad87870da83271cb734f410373ca86dde76d6907d74cf0e0/winacl-0.1.9-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=31ba781a35f3b1bd3c2ece994816c0a5fe113c73018689ab6118010ac0d15099",
+              "hashes": {
+                "sha256": "31ba781a35f3b1bd3c2ece994816c0a5fe113c73018689ab6118010ac0d15099"
+              }
+            }
+          }
+        },
+        {
+          "name": "asn1tools",
+          "version": "0.169.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/a6/51/caff14a34bada6c900115ca49f9416fccb62116e5938c98da61a51b522fe/asn1tools-0.169.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=2efc6a83d3ad3c57aea313d7896ffeca82d83155668620a54c88f426ea0eded1",
+              "hashes": {
+                "sha256": "2efc6a83d3ad3c57aea313d7896ffeca82d83155668620a54c88f426ea0eded1"
+              }
+            }
+          }
+        },
+        {
+          "name": "colorama",
+          "version": "0.4.6",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+              "hashes": {
+                "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"
+              }
+            }
+          }
+        },
+        {
+          "name": "pycryptodomex",
+          "version": "3.24.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/3b/5f/44916f6aa08a08b34b3ce41e2282d36149aa416a8edca9dbecd7c07e0a10/pycryptodomex-3.24.1-cp37-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=9a732b9f5603b153dcdc071d6b342f192981907519827f2c1e4aeac41e2b34c2",
+              "hashes": {
+                "sha256": "9a732b9f5603b153dcdc071d6b342f192981907519827f2c1e4aeac41e2b34c2"
+              }
+            }
+          }
+        },
+        {
+          "name": "pytz",
+          "version": "2026.5",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/4f/ef/c66110d46fb800dda0bf33164182dfadabe26a90e4476844d502a23dca8e/pytz-2026.5-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=e658af3757f9e26a9d25dd2aff38335acd92bc9104f890a894b2c1ba28311b03",
+              "hashes": {
+                "sha256": "e658af3757f9e26a9d25dd2aff38335acd92bc9104f890a894b2c1ba28311b03"
+              }
+            }
+          }
+        },
+        {
+          "name": "setuptools",
+          "version": "84.2.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/ef/55/6dc6d6bb953bdfc52519a0059592c52b6e3b8ad51cf8256dffceb55b0610/setuptools-84.2.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2",
+              "hashes": {
+                "sha256": "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
+              }
+            }
+          }
+        },
+        {
+          "name": "tqdm",
+          "version": "4.70.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73",
+              "hashes": {
+                "sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73"
+              }
+            }
+          }
+        },
+        {
+          "name": "tzdata",
+          "version": "2026.5",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/94/21/1e5995a1c920cce14e4bffae20c665ec10e7ed03ab25e006cd741092b718/tzdata-2026.5-py2.py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac",
+              "hashes": {
+                "sha256": "b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac"
+              }
+            }
+          }
+        },
+        {
+          "name": "blinker",
+          "version": "1.9.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/10/cb/f2ad4230dc2eb1a74edf38f1a38b9b52277f75bef262d8908e60d957e13c/blinker-1.9.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc",
+              "hashes": {
+                "sha256": "ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc"
+              }
+            }
+          }
+        },
+        {
+          "name": "cffi",
+          "version": "2.1.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/44/de/f98430906df1545ffde0d543dd124a7a439bc2cd32b36b9c53f805df7333/cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890",
+              "hashes": {
+                "sha256": "68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890"
+              }
+            }
+          }
+        },
+        {
+          "name": "click",
+          "version": "8.5.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360",
+              "hashes": {
+                "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
+              }
+            }
+          }
+        },
+        {
+          "name": "h11",
+          "version": "0.16.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+              "hashes": {
+                "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+              }
+            }
+          }
+        },
+        {
+          "name": "itsdangerous",
+          "version": "2.2.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef",
+              "hashes": {
+                "sha256": "c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef"
+              }
+            }
+          }
+        },
+        {
+          "name": "Jinja2",
+          "version": "3.1.6",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+              "hashes": {
+                "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
+              }
+            }
+          }
+        },
+        {
+          "name": "MarkupSafe",
+          "version": "3.0.4",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/0d/f2/8f18e0b806eb13c1f8d07d917a720831ead54253a6dec011fbc78098a6f8/markupsafe-3.0.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=6a45c3d514f2436064db00d7fc8778d888f0236ebfed649b53d13a59e69ad51b",
+              "hashes": {
+                "sha256": "6a45c3d514f2436064db00d7fc8778d888f0236ebfed649b53d13a59e69ad51b"
+              }
+            }
+          }
+        },
+        {
+          "name": "mdurl",
+          "version": "0.1.2",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8",
+              "hashes": {
+                "sha256": "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
+              }
+            }
+          }
+        },
+        {
+          "name": "prompt_toolkit",
+          "version": "3.0.53",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/54/6f/84908cad2d6aa5144abcf7b42709fe4fdb459bc640ec7ac5786e7693dabc/prompt_toolkit-3.0.53-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2",
+              "hashes": {
+                "sha256": "01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2"
+              }
+            }
+          }
+        },
+        {
+          "name": "pyparsing",
+          "version": "3.3.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/38/bb/d215ee7c73b61497b28a5503f9f53523f294fcc936762b7caf90e0c1c2b5/pyparsing-3.3.3-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4",
+              "hashes": {
+                "sha256": "ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4"
+              }
+            }
+          }
+        },
+        {
+          "name": "wcwidth",
+          "version": "0.9.3",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/ea/7a/4e26574d032a1709bb1fd7d95d406b7b8f87363c60305a101e6e2d9285f5/wcwidth-0.9.3-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=c12abd75ffcbad417e7770a6feb82413c102ccce5c435068c39a82e2218b00b3",
+              "hashes": {
+                "sha256": "c12abd75ffcbad417e7770a6feb82413c102ccce5c435068c39a82e2218b00b3"
+              }
+            }
+          }
+        },
+        {
+          "name": "Werkzeug",
+          "version": "3.1.9",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/a1/38/df03f564f43cec2684823f3cccae1a652ee7face1cbaa76fb223096e64d7/werkzeug-3.1.9-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab",
+              "hashes": {
+                "sha256": "6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab"
+              }
+            }
+          }
+        },
+        {
+          "name": "anyio",
+          "version": "4.15.1",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101",
+              "hashes": {
+                "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101"
+              }
+            }
+          }
+        },
+        {
+          "name": "bitstruct",
+          "version": "8.24.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/ff/4f/a40014ac1c5252bec30138d983ec6660ff1aeefa4d1de825582978b623a8/bitstruct-8.24.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "archive_info": {
+              "hash": "sha256=72bddf875f42329787ca5655f4cb3c67b6ebdd9c5dbe43273f5f32985f6d3063",
+              "hashes": {
+                "sha256": "72bddf875f42329787ca5655f4cb3c67b6ebdd9c5dbe43273f5f32985f6d3063"
+              }
+            }
+          }
+        },
+        {
+          "name": "tabulate",
+          "version": "0.10.0",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3",
+              "hashes": {
+                "sha256": "f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3"
+              }
+            }
+          }
+        },
+        {
+          "name": "pycparser",
+          "version": "3.12",
+          "download": {
+            "url": "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl",
+            "archive_info": {
+              "hash": "sha256=a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
+              "hashes": {
+                "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "netexec_dependency_commits": {
+    "Pennyw0rth/Certipy": "017dab8ff4d4447976b2a0c2b2203fd61b888681",
+    "fortra/impacket": "caba5facdd3a01b5d0decc6daf5871839f22f792",
+    "wbond/oscrypto": "1547f535001ba568b239b8797465536759c742a3",
+    "Pennyw0rth/NfsClient": "9b61e0a6385743923ccffa6a80f8dbbf0714121d"
+  },
+  "netexec_source_commit": "c7dc286ba65daf10402cdc470e531b84e6d3d911",
+  "netexec_pyproject_sha256": "7ba8a61ae394ae97f3826f856362fa9d1e7f15a280e4e0599a584747342cead4",
+  "note": "NetExec 1.5.1 的浮动 Git 依赖已钉到官方 poetry.lock 对应提交；构建时设置 POETRY_DYNAMIC_VERSIONING_BYPASS=1.5.1。包记录为安装审计，不是通用跨平台安装器。"
+}

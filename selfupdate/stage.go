@@ -45,12 +45,15 @@ type Progress func(ph Phase, pct int, msg string)
 //
 // 函数返回即代表暂存完成，调用方随后优雅关闭并以 ExitRestart 退出。
 func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion string, prog Progress) error {
-	if prog == nil {
-		prog = func(Phase, int, string) {}
-	}
 	p, err := ResolvePaths()
 	if err != nil {
 		return err
+	}
+	return stageAtPaths(ctx, c, rel, currentVersion, prog, p, embeddedPubKey)
+}
+func stageAtPaths(ctx context.Context, c *http.Client, rel *Release, currentVersion string, prog Progress, p Paths, pubKey string) error {
+	if prog == nil {
+		prog = func(Phase, int, string) {}
 	}
 	if err := checkWritable(p.Dir); err != nil {
 		return err
@@ -63,7 +66,7 @@ func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion str
 	}
 
 	prog(PhaseDownload, 0, "获取校验和清单…")
-	sums, err := fetchSums(ctx, c, rel)
+	sums, err := fetchSignedSums(ctx, c, rel, pubKey)
 	if err != nil {
 		return err
 	}
@@ -129,6 +132,9 @@ func Stage(ctx context.Context, c *http.Client, rel *Release, currentVersion str
 
 // fetchSums 下载并解析 SHA256SUMS，返回 文件名 → 十六进制摘要。
 func fetchSums(ctx context.Context, c *http.Client, rel *Release) (map[string]string, error) {
+	return fetchSignedSums(ctx, c, rel, embeddedPubKey)
+}
+func fetchSignedSums(ctx context.Context, c *http.Client, rel *Release, pubKey string) (map[string]string, error) {
 	asset, ok := rel.FindAsset(sumsAsset)
 	if !ok {
 		return nil, fmt.Errorf("该 Release 没有 %s，无法校验完整性，拒绝升级", sumsAsset)
@@ -142,6 +148,9 @@ func fetchSums(ctx context.Context, c *http.Client, rel *Release) (map[string]st
 	raw, err := io.ReadAll(io.LimitReader(body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("读取 %s: %w", sumsAsset, err)
+	}
+	if err := verifySumsSignature(ctx, c, rel, raw, nil, pubKey); err != nil {
+		return nil, err
 	}
 	out := parseSums(string(raw))
 	if len(out) == 0 {

@@ -64,19 +64,10 @@ func (e *Engine) inflightCount(taskID string) int64 {
 
 // ---------- deadline ----------
 
-// taskDeadline returns the task's absolute deadline (unix). Prefers the in-process
-// map (stamped this session); falls back to the DB-loaded value (restart), seeding
-// the map. 0 = no timeout / not yet stamped.
+// taskDeadline reads the synchronized PostgreSQL-backed lifecycle. A stale cache
+// must not resurrect the previous clock after timeout revival resets it to zero.
 func (e *Engine) taskDeadline(t *Task) int64 {
-	if v, ok := e.deadline.Load(t.ID); ok {
-		return v.(int64)
-	}
-	deadlineAt := t.lifecycleSnapshot().DeadlineAt
-	if deadlineAt > 0 {
-		e.deadline.Store(t.ID, deadlineAt)
-		return deadlineAt
-	}
-	return 0
+	return t.lifecycleSnapshot().DeadlineAt
 }
 
 // resetTimeoutRevival clears only the per-run timeout state after PostgreSQL has
@@ -147,8 +138,10 @@ func (e *Engine) startDeadlineCoordinator(ctx context.Context, t *Task) {
 }
 
 // deadlineCoordinator waits until the task's absolute deadline, then runs the settle
-// sequence. Absolute wall-clock: it keeps counting through pauses.
+// sequence. User pauses keep counting; unexpectedly long timer sleeps are compensated.
 func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
+	var pendingShift time.Duration
+	var pendingDeadline int64
 	for {
 		select {
 		case <-ctx.Done():
@@ -157,6 +150,16 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 		}
 		if isTerminalStatus(e.m.TaskStatus(t.ID)) {
 			return // already finished (goals met / failed) — nothing to time out
+		}
+		if pendingShift > 0 {
+			if err := e.extendDeadlineAt(t, pendingShift, pendingDeadline); err != nil {
+				log.Printf("[deadline] task %s persist freeze extension failed; retrying: %v", t.ID, err)
+				if sleepCtx(ctx, deadlinePollInterval) {
+					return
+				}
+				continue
+			}
+			pendingShift = 0
 		}
 		dl := e.taskDeadline(t)
 		if dl <= 0 {
@@ -170,9 +173,13 @@ func (e *Engine) deadlineCoordinator(ctx context.Context, t *Task) {
 			if nap > deadlineMaxSleep {
 				nap = deadlineMaxSleep
 			}
+			// Strip monotonic readings: some hosts stop monotonic time during suspend.
+			before := time.Now().Round(0)
 			if sleepCtx(ctx, nap) {
 				return
 			}
+			pendingShift = detectFreeze(nap, time.Now().Round(0).Sub(before))
+			pendingDeadline = dl
 			continue
 		}
 		e.settleTask(ctx, t)

@@ -70,7 +70,7 @@ func (s *Server) occupiesConcurrencySlot(t *Task) bool {
 		return false
 	}
 	lifecycle := t.lifecycleSnapshot()
-	if lifecycle.Queued || lifecycle.Paused || isTerminalStatus(lifecycle.Status) {
+	if lifecycle.Queued || lifecycle.Paused || isTerminalStatus(lifecycle.Status) || s.awaitingHandoffStart(t) {
 		return false
 	}
 	// Deletion temporarily pauses the Engine but has not committed yet. Preserve
@@ -182,7 +182,7 @@ func (s *Server) admitTaskWhen(t *Task, mode string, requirePaused bool) (queued
 	}
 
 	status := lifecycle.Status
-	if wasTerminal {
+	if wasTerminal || s.awaitingHandoffStart(t) {
 		status = "running"
 	}
 	if err := s.m.ApplyTaskAdmission(t.ID, lifecycle.Status, status, shouldQueue, mode, wasQueued); err != nil {
@@ -236,10 +236,12 @@ func (s *Server) startAdmittedTask(t *Task, mode string) {
 		if s.engine.IsPaused(t.ID) {
 			s.engine.Resume(t)
 		}
-		go func() {
+		if !s.startBackground(func() {
 			defer s.engine.decInflight(t.ID)
 			s.startTaskEngine(t)
-		}()
+		}) {
+			s.engine.decInflight(t.ID)
+		}
 		return
 	}
 	s.engine.Run(s.ctx, t)
@@ -261,7 +263,7 @@ func (s *Server) reconcileConcurrency() {
 	if enabled {
 		for _, task := range s.m.List() {
 			lifecycle := task.lifecycleSnapshot()
-			if lifecycle.Queued || lifecycle.Paused || s.engine.IsPaused(task.ID) || s.engine.IsDeleting(task.ID) ||
+			if lifecycle.Queued || lifecycle.Paused || s.awaitingHandoffStart(task) || s.engine.IsPaused(task.ID) || s.engine.IsDeleting(task.ID) ||
 				isTerminalStatus(lifecycle.Status) || s.engine.ReadyFor(task) || s.engine.ActiveLLMCalls(task.ID) > 0 {
 				continue
 			}

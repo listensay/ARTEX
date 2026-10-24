@@ -1,5 +1,8 @@
 "use client";
 
+import { ExternalLink } from "@/components/external-link";
+
+import { HoneypotBadge } from "@/components/honeypot-badge";
 import * as React from "react";
 
 import {
@@ -590,7 +593,7 @@ export default function AssetsPage() {
         <TabsContent value="service" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "服务", "域名", "IP", "端口", "状态码", "标题", "指纹", "认证", ""]}
+            cols={["", "服务", "域名", "IP", "端口", "状态码", "标题", "指纹", "蜜罐信号", "认证", ""]}
             loaded={loaded}
             total={total}
             page={page}
@@ -607,14 +610,14 @@ export default function AssetsPage() {
               let domainCell: React.ReactNode = "—";
               if (isHttp && a.url) {
                 domainCell = (
-                  <a
+                  <ExternalLink
                     href={a.url}
                     target="_blank"
                     rel="noreferrer"
                     className="text-blue-600 hover:underline dark:text-blue-400"
                   >
                     {a.domain || a.url}
-                  </a>
+                  </ExternalLink>
                 );
               } else if (a.domain) {
                 domainCell = a.domain;
@@ -648,6 +651,9 @@ export default function AssetsPage() {
                   </TableCell>
                   <TableCell>
                     <Chips items={a.technologies ?? []} />
+                  </TableCell>
+                  <TableCell>
+                    <HoneypotBadge score={a.honeypot_score} evidence={a.honeypot_evidence} />
                   </TableCell>
                   <TableCell>
                     {(a.auth ?? []).length === 0 ? (

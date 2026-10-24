@@ -499,7 +499,8 @@ FROM findings WHERE id=$1 FOR UPDATE`, id).
 	if from == status {
 		// 状态没有真的变化就不登记事件：重复提交同一个值、幂等重放都不该
 		// 产生推送噪音。
-		return from, true, false, false, nil
+		_, err = tx.ExecContext(ctx, `UPDATE findings SET triage_revision=triage_revision+1 WHERE id=$1`, id)
+		return from, true, false, false, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1`, id, status); err != nil {
 		return from, true, false, false, err

@@ -367,6 +367,9 @@ func (t *Traffic) Close() error {
 	if t.closed != nil {
 		t.closeOnce.Do(func() { close(t.closed) })
 	}
+	if t.proxy != nil {
+		_ = t.proxy.Close()
+	}
 	t.reaping.Wait()
 	return t.db.Close()
 }
@@ -2127,4 +2130,13 @@ func clip(s string, max int) string {
 		return s
 	}
 	return s[:max] + fmt.Sprintf("\n... [截断，共 %d 字节；完整在流量文件树] ...", len(s))
+}
+
+// UpstreamProxy returns the currently selected internal egress URL.
+func (t *Traffic) UpstreamProxy() string {
+	u := t.upstream.Load()
+	if u == nil {
+		return ""
+	}
+	return u.String()
 }

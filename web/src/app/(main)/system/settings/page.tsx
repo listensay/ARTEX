@@ -16,6 +16,7 @@ import { CHAT_SEND_MODE_OPTIONS, type ChatSendMode, setChatSendMode, useChatSend
 import type { Settings } from "@/lib/types";
 
 import { UpdateCard } from "./_components/update-card";
+import { SecurityCard } from "./_components/security-card";
 
 export default function SystemSettingsPage() {
   const [trafficCapture, setTrafficCapture] = React.useState(false);
@@ -267,6 +268,7 @@ export default function SystemSettingsPage() {
           column-gap 只管列间距，行间距要由子元素自己给。 */}
       <div className="columns-1 gap-4 md:gap-6 lg:columns-2">
         <UpdateCard />
+        <SecurityCard />
 
         <Card className="mb-4 break-inside-avoid md:mb-6">
           <CardHeader>
@@ -444,8 +446,8 @@ export default function SystemSettingsPage() {
               记录代理，独立于流量捕获。
               <br />
               来源可选 <b>DuckDuckGo（ddgs）</b>（无需 Key）、<b>Brave（免费版）</b>（需填写 Brave API Key）、{" "}
-              <b>Tavily</b>（需填写 Tavily API Key）或 <b>DeepSeek</b>（复用当前 LLM 配置）。总开关关闭时，各
-              Agent 的网络搜索开关不可用。
+              <b>Tavily</b>（需填写 Tavily API Key）或 <b>DeepSeek</b>（复用当前 LLM 配置）。总开关关闭时，各 Agent
+              的网络搜索开关不可用。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Autumn-27/artex/agent/chainskel"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/guard"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/llm"
@@ -21,6 +23,7 @@ import (
 // assets, judges whether the task goal is met, and emits 0..N exploration intents
 // into the frontier. It is the sole intent generator.
 type Planner struct {
+	guard             *guard.Guard
 	findingRecorder   FindingRecorder
 	prov              llm.Provider
 	model             string
@@ -30,15 +33,16 @@ type Planner struct {
 	maxTurns          int                                    // max agent turns per run (0 = unlimited)
 	killWork          func(intentID int64) error             // engine callback to terminate a running work (nil = off)
 	steerWork         func(intentID int64, msg string) error // engine callback to steer a running work mid-run (nil = off)
-	proxyAddr         string                                 // recording proxy for WebFetch (empty = direct)
-	proxyCACert       string                                 // recording proxy's CA cert path (HTTPS verify)
-	webSearch         WebSearchOpts                          // web_search tool backend selection (off by default)
-	workDir           string                                 // shared work dir (surfaced in prompt as artifact-output target)
-	injectConstraints func() bool                            // resolver: inject task operation constraints into system prompt? (nil = yes)
-	nonStreamingFn    func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn      func() bool                            // resolver: use experimental noa compaction? (nil = off)
-	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
-	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
+	proxyForTask      func(int64) (string, string)
+	proxyAddr         string        // recording proxy for WebFetch (empty = direct)
+	proxyCACert       string        // recording proxy's CA cert path (HTTPS verify)
+	webSearch         WebSearchOpts // web_search tool backend selection (off by default)
+	workDir           string        // shared work dir (surfaced in prompt as artifact-output target)
+	injectConstraints func() bool   // resolver: inject task operation constraints into system prompt? (nil = yes)
+	nonStreamingFn    func() bool   // resolver: use non-streaming (Complete) path? (nil = streaming)
+	noaEnabledFn      func() bool   // resolver: use experimental noa compaction? (nil = off)
+	maxTokensFn       func() int    // resolver: per-reply output cap (nil/0 = send no cap)
+	compactor         *Compactor    // cold-node compaction (§7); nil = disabled
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -47,6 +51,8 @@ type Planner struct {
 	todoMu sync.Mutex
 	todos  map[int64]*actool.TodoStore
 }
+
+func (p *Planner) SetGuard(g *guard.Guard) { p.guard = g }
 
 func NewPlanner(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int) *Planner {
 	return &Planner{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns, todos: map[int64]*actool.TodoStore{}}
@@ -90,7 +96,8 @@ func (p *Planner) compactionWindow() int {
 
 // SetProxy points the planner's WebFetch at the recording proxy plus the CA cert
 // it trusts to verify HTTPS through it (empty addr = direct).
-func (p *Planner) SetProxy(addr, caCert string) { p.proxyAddr, p.proxyCACert = addr, caCert }
+func (p *Planner) SetTaskProxyResolver(fn func(int64) (string, string)) { p.proxyForTask = fn }
+func (p *Planner) SetProxy(addr, caCert string)                         { p.proxyAddr, p.proxyCACert = addr, caCert }
 
 // SetWebSearch selects the web_search backend for the planner (off by default).
 func (p *Planner) SetWebSearch(o WebSearchOpts) { p.webSearch = o }
@@ -342,7 +349,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 func plannerSystem(goal, dataDir, workDir string) string {
 	body := renderSystem("planner", plannerDefaultTmpl, PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
-	return body + artifactSpec(workDir)
+	return body + artifactSpec(workDir) + untrustedDataRule + chainskel.PlannerMetaRules + plannerHoneypotRules
 }
 
 // Plan runs one planning round. emit, if non-nil, receives the planner's execution
@@ -354,6 +361,13 @@ func plannerSystem(goal, dataDir, workDir string) string {
 // for time/heartbeat wakes). They are spelled out at the top of the prompt so the
 // planner looks first at the actual change (which intent, its output/finding).
 func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, goal string, triggers []TriggerEvent, emit func(db.Activity)) (met bool, reason string, err error) {
+
+	proxyAddr, proxyCACert := p.proxyAddr, p.proxyCACert
+	if p.proxyForTask != nil {
+		if a, c := p.proxyForTask(taskID); a != "" {
+			proxyAddr, proxyCACert = a, c
+		}
+	}
 	// cold-digest §2.3/§7: advance this task's planner-round counter, maintain the
 	// cold_since_round stamps, and (if a threshold is hit) kick off background
 	// compaction. Synchronous part is cheap (a few queries); the LLM compaction
@@ -366,6 +380,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	}
 	tsx.SetTaskID(taskID)
 	tsx.SetCoverageEnabled(as == nil || as.CoverageEnabled(taskID))
+	tsx.maxOpenIntents = MaxOpenIntents
 	tsx.killWork = p.killWork   // enable kill_work tool (nil = unavailable)
 	tsx.steerWork = p.steerWork // enable steer_work tool (nil = unavailable)
 	if origin, _ := ts.OriginFactID(); origin > 0 {
@@ -375,6 +390,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
 	base := append(tsx.DropCoverageTools(tsx.PlannerTools()), actool.DefaultTools()...)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
+	ctx = intercept.WithTaskContext(ctx, fmt.Sprint(taskID), "planner", emit)
 	tools, def, cleanup := AugmentTools(ctx, "planner", base)
 	defer cleanup()
 	// 关键态势（刚完成的意图 + 预取的完整图）改放【本轮 user 输入】(见下方 input)，system
@@ -412,8 +428,8 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		UnlockSet:       def.Unlock,
 		PermissionMode:  permission.ModeBypass,
 		EnableWebFetch:  true, // 走记录代理留痕；载入代理 CA 验证 MITM 重签的 HTTPS 证书
-		WebFetchProxy:   p.proxyAddr,
-		WebFetchCACert:  p.proxyCACert,
+		WebFetchProxy:   proxyAddr,
+		WebFetchCACert:  proxyCACert,
 		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
 		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
 		EnableWebSearch:       p.webSearch.Enabled,
@@ -424,8 +440,8 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		DeepSeekSearchAPIKey:  p.webSearch.DeepSeekAPIKey,
 		DeepSeekSearchModel:   p.webSearch.DeepSeekModel,
 		WebSearchProxy:        p.webSearch.Proxy,
-		BashEnv:               proxyEnv(p.proxyAddr, p.proxyCACert), // Bash 子命令默认走代理+信任 CA
-		WorkingDir:            taskDir,                              // 本任务工作目录 <workDir>/tasks/<taskID>
+		BashEnv:               proxyEnv(proxyAddr, proxyCACert), // Bash 子命令默认走代理+信任 CA
+		WorkingDir:            taskDir,                          // 本任务工作目录 <workDir>/tasks/<taskID>
 		ToolOutputDir:         cmdOutDir(taskDir),
 		MaxTurns:              p.maxTurns, // 0 = unlimited (configurable in agent management)
 		MaxDuration:           maxDur,     // 0=不限;有 deadline 时=距 deadline 剩余
@@ -438,6 +454,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		Settlement:   settle,
 		NonStreaming: p.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
 		MaxTokens:    p.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
+	}
+	if p.guard != nil {
+		opts.Hooks = p.guard.Hooks()
 	}
 	if p.tx != nil { // persist raw LLM conversation; one accumulating file per task's planner
 		opts.Transcript = p.tx

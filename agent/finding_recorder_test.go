@@ -76,14 +76,14 @@ func TestReportFindingAtomicContract(t *testing.T) {
 		return res.Flatten()
 	}
 	ts.SetFindingRecorder(failingFindingRecorder{})
-	if got := call(`{"vulnclass":"TEST","summary":"fail","severity":"low","traffic_refs":[{"traffic_id":"x"}]}`); !strings.Contains(got, "persistence failed") {
+	if got := call(`{"vulnclass":"TEST","summary":"fail","severity":"low","evidence":"fixture baseline and proof outputs differ","traffic_refs":[{"traffic_id":"x"}]}`); !strings.Contains(got, "persistence failed") {
 		t.Fatal(got)
 	}
 	if notices != 0 || ts.writes.Findings != 0 {
 		t.Fatal("notified before commit")
 	}
 	ts.SetFindingRecorder(nil)
-	got := call(`{"vulnclass":"TEST","summary":"legacy report","severity":"low"}`)
+	got := call(`{"vulnclass":"TEST","summary":"legacy report","severity":"low","evidence":"fixture baseline and proof outputs differ"}`)
 	lines := strings.SplitN(got, "\n", 2)
 	if len(lines) != 2 {
 		t.Fatal(got)
@@ -99,7 +99,7 @@ func TestReportFindingAtomicContract(t *testing.T) {
 	if err != nil || f == nil || f.NodeID == nil || *f.NodeID != out.NodeID {
 		t.Fatalf("wrong finding/node mapping: %+v %v", f, err)
 	}
-	if got = call(`{"vulnclass":"TEST","summary":"no storage","severity":"low","traffic_refs":[{"traffic_id":"x"}]}`); !strings.Contains(got, "未登记") {
+	if got = call(`{"vulnclass":"TEST","summary":"no storage","severity":"low","evidence":"fixture baseline and proof outputs differ","traffic_refs":[{"traffic_id":"x"}]}`); !strings.Contains(got, "未登记") {
 		t.Fatal(got)
 	}
 	if notices != 1 {

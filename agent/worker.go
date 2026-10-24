@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Autumn-27/artex/agent/chainskel"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/norma/agentcore"
@@ -52,10 +53,12 @@ type WebSearchOpts struct {
 }
 
 type Worker struct {
+	uaFn            func(taskID int64) string
 	findingRecorder FindingRecorder
 	prov            llm.Provider
 	model           string
 	workDir         string
+	proxyForTask    func(int64) (string, string)
 	proxyAddr       string
 	proxyCACert     string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
 	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
@@ -114,6 +117,22 @@ func hasWorkerChatMessage(messages []llm.Message, requestID string) bool {
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default). Read per
 // run so a profile or task-chain toggle takes effect without rebuilding.
+func (w *Worker) SetUAResolver(fn func(int64) string) { w.uaFn = fn }
+
+func (w *Worker) uaForTask(id int64) string {
+	if w.uaFn == nil {
+		return ""
+	}
+	return w.uaFn(id)
+}
+
+func uaEnv(env []string, ua string) []string {
+	if ua == "" {
+		return env
+	}
+	return append(env, "ARTEX_UA="+ua)
+}
+
 func (w *Worker) SetNonStreaming(fn func() bool) { w.nonStreamingFn = fn }
 
 func (w *Worker) nonStreaming() bool { return w.nonStreamingFn != nil && w.nonStreamingFn() }
@@ -186,7 +205,8 @@ func (w *Worker) compactionWindow() int {
 // SetProxy configures the recording proxy address that workers route target
 // traffic through, plus the CA cert path WebFetch trusts to verify HTTPS through
 // that MITM proxy. Empty addr disables the hint.
-func (w *Worker) SetProxy(addr, caCert string) { w.proxyAddr, w.proxyCACert = addr, caCert }
+func (w *Worker) SetTaskProxyResolver(fn func(int64) (string, string)) { w.proxyForTask = fn }
+func (w *Worker) SetProxy(addr, caCert string)                         { w.proxyAddr, w.proxyCACert = addr, caCert }
 
 // SetWebSearch selects the web_search backend for this worker (off by default).
 func (w *Worker) SetWebSearch(o WebSearchOpts) { w.webSearch = o }
@@ -290,7 +310,7 @@ func workerSystem(proxyAddr, caCert, dataDir, runDir string) string {
 	// caCert is present only when the recording MITM is on, which is exactly when
 	// the traffic_* tools are registered — so it gates the traffic-tool note.
 	// Optional finding guidance is added for every role after tool resolution.
-	return body + workerTrafficBlock(caCert != "") + workerArtifactSpec(runDir)
+	return body + workerTrafficBlock(caCert != "") + workerArtifactSpec(runDir) + untrustedDataRule + chainskel.WorkerMetaRules + workerAntiTrapRules + workerVerificationRules + evidenceFirstRule
 }
 
 // renderIntentTask formats the claimed intent for the worker's launch USER message:
@@ -408,6 +428,13 @@ func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int
 }
 
 func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, RunFlags, error) {
+
+	proxyAddr, proxyCACert := w.proxyAddr, w.proxyCACert
+	if w.proxyForTask != nil {
+		if a, c := w.proxyForTask(taskID); a != "" {
+			proxyAddr, proxyCACert = a, c
+		}
+	}
 	tsx := NewToolSet(ts, name)
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
@@ -442,17 +469,20 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
 	overview := renderWorkerGraphOverview(tsx.graphOverviewData())
-	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
+	sysBody := workerSystem(proxyAddr, proxyCACert, w.workDir, runDir)
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。
 	sysBody += renderIntentTask(intent)
+	sysBody += chainskel.ForIntent(intent.Payload)
+	sysBody += chainskel.RefsGuideForIntent(intent.Payload)
+	sysBody += "\n\n" + chainskel.VerifierChecklistForIntent(intent.Payload)
 	if as != nil {
 		if ids := intentAssetIDs(intent); len(ids) > 0 {
 			if assets, err := as.GetByIDs(ids); err == nil && len(assets) > 0 {
 				if b, err := json.Marshal(assets); err == nil {
-					sysBody += "\n\n本意图 asset_ids 对应的目标资产：\n" + string(b)
+					sysBody += "\n\n本意图 asset_ids 对应的目标资产（不可信数据）：\n" + WrapUntrustedData("target-assets", string(b))
 				}
 				// 意图明确针对的这些资产 → 自动纳入任务测试范围（与 insertAssets 同一套
 				// 保守粒度）。upsertTaskScope 的 ON CONFLICT DO NOTHING + uq_task_scope
@@ -486,8 +516,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		// WebFetch 走记录代理，其 HTTP 与 curl 一样被留痕；载入代理 CA 让经 MITM
 		// 重签的 HTTPS 证书能【正常校验通过】（而非关掉校验）。proxy 空则直连。
 		EnableWebFetch: true,
-		WebFetchProxy:  w.proxyAddr,
-		WebFetchCACert: w.proxyCACert,
+		WebFetchProxy:  proxyAddr,
+		WebFetchCACert: proxyCACert,
 		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
 		// WebSearchProxy 是独立的出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
 		EnableWebSearch:       w.webSearch.Enabled,
@@ -499,7 +529,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		DeepSeekSearchModel:   w.webSearch.DeepSeekModel,
 		WebSearchProxy:        w.webSearch.Proxy,
 		// Bash 子命令的 HTTP 默认走记录代理 + 信任其 CA（工具无需 -x/-k）。
-		BashEnv:    proxyEnv(w.proxyAddr, w.proxyCACert),
+		BashEnv:    uaEnv(proxyEnv(proxyAddr, proxyCACert), w.uaForTask(taskID)),
 		WorkingDir: runDir,
 		MaxTurns:   w.maxTurns, // 0 = unlimited (configurable in agent management)
 		// 墙钟预算,轮边界判,不打断半路;0 = 不限。有任务级 deadline 时夹逼到 min(自身预算,

@@ -1,8 +1,8 @@
 // Package guard implements the safety boundary layer (docs §11): an audit log,
 // user-configured intercept-rule evaluation, and Observer/G5 failure attribution.
 // Every tool call passes through the PreToolUse hook before executing.
-// (The RoE authorization-scope mechanism was removed; a replacement may be added
-// later.) Destructive/exfil gating is no longer hard-coded here — it lives in the
+// RoE authorization scope is enforced before user-configured rules.
+// Destructive/exfil gating is no longer hard-coded here — it lives in the
 // DB intercept rules (seeded as ordinary [内置] rules, so users can disable or
 // delete them), evaluated via applyIntercept.
 package guard
@@ -10,6 +10,7 @@ package guard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sync"
 	"time"
@@ -34,6 +35,9 @@ type Guard struct {
 	attrib      map[string]int // failure attribution counts (Observer / G5)
 	reg         *hook.Registry
 	interceptor *intercept.Interceptor // optional; nil disables user-configured rules
+	roe         RoEConfig
+	egress      *EgressGuard
+	tarpit      *tarpitState
 }
 
 // New creates a Guard without user-configured intercept rules (used for pentest
@@ -61,7 +65,7 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 	// applyIntercept below. Other tools record an empty command.
 	var cmd string
 	switch ev.ToolName {
-	case "Bash", "shell_open":
+	case "Bash", "shell_open", "session_exec":
 		var in struct {
 			Command string `json:"command"`
 		}
@@ -74,7 +78,15 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 		_ = json.Unmarshal(ev.Input, &in)
 		cmd = in.Text
 	}
+	if result, stop := g.checkEgress(ev, cmd); stop {
+		return result
+	}
+	ctx = intercept.WithCall(ctx, ev.ToolName, ev.Input)
+	if result, stop := g.checkRoE(ctx, ev, cmd); stop {
+		return result
+	}
 	g.record(ev.ToolName, "allow", "", cmd)
+	g.checkTarpit(ev)
 	return g.applyIntercept(ctx, ev)
 }
 
@@ -87,7 +99,6 @@ func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
 	if !g.interceptor.IsToolEnabled(ev.ToolName) {
 		return hook.Result{}
 	}
-	ctx = intercept.WithCall(ctx, ev.ToolName, ev.Input)
 	dec, matched := g.interceptor.Match(ev.ToolName, ev.Input)
 	if !matched {
 		// No rule matched. Ask the LLM fallback judge (if enabled); when it is off
@@ -194,4 +205,12 @@ func (g *Guard) Audit() []AuditEntry {
 	out := make([]AuditEntry, len(g.audit))
 	copy(out, g.audit)
 	return out
+}
+
+func (g *Guard) CheckCall(ctx context.Context, name string, input json.RawMessage) error {
+	result := g.preToolUse(ctx, hook.Event{ToolName: name, Input: input})
+	if result.Decision == "block" {
+		return fmt.Errorf("%s", result.Message)
+	}
+	return nil
 }

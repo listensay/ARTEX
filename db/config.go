@@ -815,7 +815,7 @@ type MCPServer struct {
 	Env       json.RawMessage `json:"env"`
 	URL       string          `json:"url,omitempty"`
 	Enabled   bool            `json:"enabled"`
-	Insecure  bool            `json:"insecure"` // http: skip TLS cert verification (self-signed servers, issue #108)
+	Insecure  bool            `json:"insecure"`        // http: skip TLS cert verification (self-signed servers, issue #108)
 	Tools     []string        `json:"tools,omitempty"` // cached tool names (mcp_tools_cache)
 }
 
@@ -980,14 +980,15 @@ func (d *DB) SkillAgents(skillName string) ([]int64, error) {
 	return out, rows.Err()
 }
 
-// SetAgentSkillVisibility replaces all skill visibility for an agent.
+// SetAgentSkillVisibility replaces enabled skills while retaining explicit off
+// rows so first-insert startup defaults cannot restore a user's disabled skill.
 func (d *DB) SetAgentSkillVisibility(agentID int64, names []string) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM agent_skill_visibility WHERE agent_id=$1`, agentID); err != nil {
+	if _, err := tx.Exec(`UPDATE agent_skill_visibility SET enabled=false WHERE agent_id=$1`, agentID); err != nil {
 		return err
 	}
 	for _, name := range names {
@@ -1001,12 +1002,8 @@ ON CONFLICT (agent_id,skill_name) DO UPDATE SET enabled=true`, agentID, name); e
 
 // ToggleSkillVisibility sets one (agent, skill_name) visibility on/off.
 func (d *DB) ToggleSkillVisibility(agentID int64, skillName string, on bool) error {
-	if on {
-		_, err := d.Exec(`INSERT INTO agent_skill_visibility(agent_id,skill_name,enabled) VALUES ($1,$2,true)
-ON CONFLICT (agent_id,skill_name) DO UPDATE SET enabled=true`, agentID, skillName)
-		return err
-	}
-	_, err := d.Exec(`DELETE FROM agent_skill_visibility WHERE agent_id=$1 AND skill_name=$2`, agentID, skillName)
+	_, err := d.Exec(`INSERT INTO agent_skill_visibility(agent_id,skill_name,enabled) VALUES ($1,$2,$3)
+ON CONFLICT (agent_id,skill_name) DO UPDATE SET enabled=EXCLUDED.enabled`, agentID, skillName, on)
 	return err
 }
 

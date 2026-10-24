@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/honeydetect"
 
 	"github.com/miekg/dns"
 	"github.com/projectdiscovery/dnsx/libs/dnsx"
@@ -240,12 +241,31 @@ func (e *Engine) doHTTP(id int64, rawURL string) {
 	statusCode := resp.StatusCode
 	bodyLen := int64(len(body))
 	title := extractTitle(body)
-	_, _ = e.as.UpsertHTTPService(db.UpsertHTTPServiceReq{
+	serviceID, saveErr := e.as.UpsertHTTPService(db.UpsertHTTPServiceReq{
 		URL:           rawURL,
 		StatusCode:    &statusCode,
 		ContentLength: &bodyLen,
 		PageTitle:     title,
 	})
+	if saveErr == nil {
+		port := 80
+		if req.URL.Scheme == "https" {
+			port = 443
+		}
+		if req.URL.Port() != "" {
+			port, _ = strconv.Atoi(req.URL.Port())
+		}
+		view := honeydetect.ServiceView{Port: port, Banner: resp.Header.Get("Server"), Title: title, Body: string(body)}
+		if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+			cert := resp.TLS.PeerCertificates[0]
+			view.CertSubject = cert.Subject.String()
+			view.CertIssuer = cert.Issuer.String()
+		}
+		score, ev := honeydetect.Evaluate(view)
+		if score > 0 {
+			_ = e.as.SetHoneypotScore(serviceID, score, ev)
+		}
+	}
 }
 
 func extractTitle(body []byte) string {

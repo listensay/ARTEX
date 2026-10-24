@@ -220,6 +220,8 @@ export interface TaskAssetView {
 export type NewAssetType = "root_domain" | "ip" | "subdomain" | "app" | "service" | "endpoint";
 
 export interface Asset {
+  honeypot_score?: number;
+  honeypot_evidence?: string;
   id: number;
   type: NewAssetType;
   company_id?: number;
@@ -720,6 +722,25 @@ export interface ActiveFindingRetest {
   status: "pending" | "running";
 }
 
+export interface FindingCheck {
+  id: number;
+  finding_id: number;
+  kind: "verify";
+  conversation_id: number | null;
+  status: "pending" | "running" | "completed" | "failed" | "stopped";
+  verdict: "" | "verified" | "false_positive" | "inconclusive";
+  evidence_version: number;
+  triage_revision: number;
+  source_task_id: number | null;
+  applied: boolean;
+  summary: string;
+  evidence: string;
+  error: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export interface FindingRetest {
   id: number;
   finding_id: number;
@@ -909,6 +930,11 @@ export interface TrafficHost {
 
 // ---- App settings (runtime toggles) ----
 export interface Settings {
+  tarpit_fetch_budget?: number;
+  web_ua_pool?: string[];
+  roe_enforcement?: "off" | "warn" | "strict";
+  gate_enabled?: boolean;
+  gate_path?: string;
   traffic_capture: boolean;
   agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
   llm_record: boolean; // LLM 录制开关（默认关）；关闭时不记录任何 LLM 调用
@@ -1306,7 +1332,7 @@ export interface AssetInterceptRule {
 }
 
 export interface InterceptPending {
-  decision_source?: "rule" | "model" | "unknown" | "";
+  decision_source?: "rule" | "model" | "auto_allow" | "unknown" | "";
   id: number;
   rule_id?: number;
   conversation_id?: number;
@@ -1350,7 +1376,7 @@ export interface JudgeUsage {
 
 export interface InterceptApprovalFilter {
   status?: InterceptPending["status"];
-  decision_source?: "rule" | "model" | "unknown";
+  decision_source?: "rule" | "model" | "auto_allow" | "unknown";
 }
 
 // InterceptApprovalRow enriches InterceptPending with conversation/task and rule context.
@@ -1610,3 +1636,122 @@ export interface InterceptExecution {
   seq: number;
   items: Activity[];
 }
+
+export interface IntranetNode {
+  id: string;
+  ip: string;
+  segment: string;
+  /** 是否有存活会话（图上高亮/加边框）。 */
+  has_session: boolean;
+  alive_sessions: number;
+  /** 平台自身（回连端）节点，图上特殊标记。 */
+  is_callback: boolean;
+}
+
+/** GET /api/intranet/topology 的边（隧道链路）。state: alive / stopped / error。 */
+export interface IntranetEdge {
+  id: string;
+  kind: string;
+  from: string;
+  to: string;
+  state: string;
+}
+
+export interface IntranetSegment {
+  name: string;
+  color_key: string;
+}
+
+export interface IntranetTopology {
+  nodes: IntranetNode[];
+  edges: IntranetEdge[];
+  segments: IntranetSegment[];
+}
+
+/** GET /api/sessions 的会话（webshell）记录。status: alive / dead。 */
+export interface ShellSession {
+  id: string;
+  /** 马型，如 beholder / godzilla / antsword。 */
+  kind: string;
+  url: string;
+  lang: string;
+  platform: string;
+  /** 宿主标识（拓扑节点 id 或 ip）。 */
+  host_asset_id: string;
+  status: string;
+  last_beat: string;
+  /** 创建该会话的任务 id（后端 JSON number，omitempty；0/缺省 = 未关联）。 */
+  created_by_task?: number;
+}
+
+/** POST /api/sessions/{id}/exec 的结果。 */
+export interface SessionExecResult {
+  stdout: string;
+  stderr: string;
+  ms: number;
+  timed_out: boolean;
+  /** 通道侧错误（如会话已断），HTTP 层成功但执行失败时由后端填充。 */
+  error?: string;
+}
+
+/** POST /api/sessions/{id}/list 的目录项。 */
+export interface SessionFsEntry {
+  name: string;
+  is_dir: boolean;
+  size: number;
+}
+
+/** POST /api/sessions/{id}/read 的结果：文本 content 或 base64（二进制）二选一。 */
+export interface SessionReadResult {
+  content?: string;
+  content_base64?: string;
+  truncated: boolean;
+}
+
+/** GET /api/tunnels 的隧道台账。state: alive / stopped / error。 */
+export interface TunnelInfo {
+  id: string;
+  /** 归属任务 id（后端 JSON number；0 = 未关联）。 */
+  task_id: number;
+  kind: string;
+  state: string;
+  /** 平台侧入口（chisel server 绑定地址/端口）。 */
+  listen_host: string;
+  listen_port: number;
+  /** portfwd：经隧道访问的内网目标。 */
+  target_host?: string;
+  target_port?: number;
+  via_session_id: string;
+  last_check: string;
+  /** 探活/建链失败原因（state=error 时一般由后端填充）。 */
+  error?: string;
+}
+
+/** GET /api/credentials 的凭据记录（密钥已脱敏）。 */
+export interface Credential {
+  id: string;
+  cred_type: string;
+  username: string;
+  domain: string;
+  secret_masked: string;
+  source: string;
+  verified: boolean;
+  verification_reason?: string;
+  created_at: string;
+  /** 归属任务 id（后端 JSON number；0 = 未关联）。 */
+  task_id?: number;
+}
+
+
+export interface PendingScopeRow {
+  id: number;
+  task_id: number;
+  kind: string; // cidr | ip 等
+  value: string;
+  status: "pending" | "approved" | "dismissed";
+  hits: number;
+  first_seen: string;
+  last_seen: string;
+  decided_at?: string;
+}
+export interface StageEntry {token:string;name:string;url:string;size:number;expires_at:string;one_shot:boolean;task_id?:string;hits:number;}

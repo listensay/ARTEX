@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/honeydetect"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -110,8 +111,12 @@ type assetInputItem struct {
 	ServiceIP     string           `json:"service_ip"` // optional enrichment IP
 
 	// ---- service (other) ----
-	Port  int    `json:"port"`
-	Proto string `json:"proto"`
+	Port        int    `json:"port"`
+	Proto       string `json:"proto"`
+	Banner      string `json:"banner"`
+	HTTPBody    string `json:"http_body"`
+	CertSubject string `json:"cert_subject"`
+	CertIssuer  string `json:"cert_issuer"`
 
 	// ---- endpoint ----
 	Method string           `json:"method"`
@@ -175,6 +180,10 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 						"type":        "integer",
 						"description": "HTTP 响应体字节数（可选）",
 					},
+					"banner":       str("已有服务 banner / HTTP Server 头，供静态蜜罐签名评估"),
+					"http_body":    str("已有响应正文片段，供静态签名评估；不为评分新增请求"),
+					"cert_subject": str("已有 TLS 证书 subject"),
+					"cert_issuer":  str("已有 TLS 证书 issuer"),
 					"page_title":   str("页面 <title> 内容（可选）"),
 					"favicon_mmh3": str("favicon MMH3 哈希（可选）"),
 					"technologies": map[string]any{
@@ -317,6 +326,14 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 							Auth:        item.Auth,
 							TaskID:      taskID,
 						})
+					}
+
+					if err == nil {
+						port := item.Port
+						if item.URL != "" {
+							port = urlPort(item.URL)
+						}
+						t.evaluateHoneypot(id, honeydetect.ServiceView{Port: port, Banner: item.Banner, Title: item.PageTitle, Body: item.HTTPBody, CertSubject: item.CertSubject, CertIssuer: item.CertIssuer})
 					}
 
 				case "endpoint":
@@ -645,7 +662,7 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 	return []actool.CoreTool{
 		// list_findings 保留：报漏洞前先查本任务已确认漏洞，避免重复上报同一漏洞。
 		t.listFindings(),
-		t.addFinding(), t.recordFact(),
+		t.addFinding(), t.recordFact(), t.verifierChecklist(),
 		// asset management (handlers guard nil store internally)。
 		// add_company_scope 不给 worker：定义企业资产范围属规划/主控/Auto 的职责，worker 只执行探索。
 		t.insertAssets(), t.listAssets(),
@@ -667,7 +684,7 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.expandDigest(), // cold-digest §6.1
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.addHint(), t.addIntent(),
 		// steer_work：人可对某条正在运行的意图(work)实时注入纠偏指令（不打断、不丢进展）。
-		t.steerWorkTool(),
+		t.steerWorkTool(), t.killWorkTool(), t.cancelIntentTool(),
 		// set_goals：人可在运行时给本任务补一个新的最终目标（规划者据此重判是否达成）。
 		t.setGoals(),
 		// set_constraints：人可在运行时给本任务补/改操作约束（allow/deny），约束 planner/worker 的探索边界。

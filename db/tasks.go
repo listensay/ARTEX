@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"time"
 )
@@ -144,13 +145,16 @@ func (d *DB) CreateTask(description, goal string, llmProfileID *int64, timeoutSe
 // TaskCreateOptions contains the task data that must be committed atomically
 // with the task/exploration row.
 type TaskCreateOptions struct {
-	Name                 string // 可选任务名称;空=未命名
-	CategoryID           *int64
-	SourceTaskIDs        []int64
-	CompanyIDs           []int64
-	LLMProfileIDs        []int64
-	TimeoutSeconds       int
-	PlanHeartbeatSeconds int
+	ParentRef             string
+	InitialHostIP         string
+	ScopeApprovalRequired bool
+	Name                  string // 可选任务名称;空=未命名
+	CategoryID            *int64
+	SourceTaskIDs         []int64
+	CompanyIDs            []int64
+	LLMProfileIDs         []int64
+	TimeoutSeconds        int
+	PlanHeartbeatSeconds  int
 	// CoverageEnabled 是「资产覆盖度功能」开关;nil=默认开(true)，让不关心该开关的创建
 	// 路径(编排 spawn、老 API)沿用原行为。仅 web 创建任务时可显式传 false 关闭。
 	CoverageEnabled *bool
@@ -230,6 +234,17 @@ INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_prof
 VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9)
 RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
+	}
+	if opts.ScopeApprovalRequired {
+		if net.ParseIP(opts.InitialHostIP) == nil {
+			return nil, fmt.Errorf("移交需要有效主机 IP")
+		}
+		if _, err := tx.Exec(`UPDATE tasks SET parent_ref=$2, scope_approval_required=true WHERE id=$1`, t.ID, opts.ParentRef); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(`INSERT INTO task_scope(task_id,kind,net,source,reason) VALUES ($1,'ip',$2::cidr,'manual','阶段移交初始主机')`, t.ID, ipToHostCIDR(opts.InitialHostIP)); err != nil {
+			return nil, err
+		}
 	}
 	if err := insertTaskRelations(tx, t.ID, opts.SourceTaskIDs); err != nil {
 		return nil, err

@@ -230,3 +230,25 @@ UPDATE tools SET description=$2, schema=$3, agents=$4, enabled=$5 WHERE key=$1`,
 		key, desc, schema, agents, enabled)
 	return err
 }
+
+// AddDefaultToolBindingOnce migrates an untouched old binding exactly once.
+// Custom bindings, descriptions, defaults and enabled flags are preserved.
+func (d *DB) AddDefaultToolBindingOnce(marker, key string, old json.RawMessage, agent string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var inserted string
+	err = tx.QueryRow(`INSERT INTO settings(key,value) VALUES($1,'true') ON CONFLICT DO NOTHING RETURNING key`, marker).Scan(&inserted)
+	if err == sql.ErrNoRows {
+		return tx.Commit()
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE tools SET agents=agents || to_jsonb($3::text),updated_at=now() WHERE key=$1 AND system AND agents=$2::jsonb`, key, string(old), agent); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

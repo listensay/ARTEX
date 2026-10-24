@@ -121,6 +121,10 @@ func (s *Server) startFindingRetest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "finding not found")
 		return
 	}
+	if errors.Is(err, db.ErrFindingTestBusy) {
+		writeErr(w, 409, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return

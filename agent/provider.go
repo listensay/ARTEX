@@ -294,7 +294,11 @@ func (c Config) NewProvider() (llm.Provider, error) {
 	if c.RatePerSecond > 0 || c.RatePerMinute > 0 {
 		lc.RateLimit = &llm.RateLimit{PerSecond: c.RatePerSecond, PerMinute: c.RatePerMinute}
 	}
-	return llm.NewProvider(lc)
+	prov, err := llm.NewProvider(lc)
+	if err != nil {
+		return nil, err
+	}
+	return wrapCallTimeout(prov, c), nil
 }
 
 // IsQuotaExhaustedMessage deliberately recognizes only explicit balance,

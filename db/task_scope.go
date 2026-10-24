@@ -109,6 +109,13 @@ func (s *AssetStore) AddAutoScope(taskID int64, assetType, domain, rawURL, ip st
 	if taskID <= 0 {
 		return nil
 	}
+	required, err := s.ScopeApprovalRequired(taskID)
+	if err != nil {
+		return err
+	}
+	if required {
+		return nil
+	}
 	switch assetType {
 	case "root_domain":
 		if d := DomainKey(domain); d != "" {
@@ -144,6 +151,15 @@ func (s *AssetStore) AddAutoScope(taskID int64, assetType, domain, rawURL, ip st
 // company: value = company name or id (must already exist). root_domain/subdomain:
 // value = a domain. ip/cidr: value = an IP or CIDR (bare IP → /32,/128).
 func (s *AssetStore) AddAgentScope(taskID int64, kind, value, reason, source string) (TaskScope, error) {
+	if source != "manual" {
+		required, err := s.ScopeApprovalRequired(taskID)
+		if err != nil {
+			return TaskScope{}, err
+		}
+		if required {
+			return TaskScope{}, fmt.Errorf("移交任务只能经人工批准扩大范围")
+		}
+	}
 	if source == "" {
 		source = "agent"
 	}
@@ -641,4 +657,10 @@ ORDER BY t.id LIMIT $`+limPos+` OFFSET $`+offPos, pageArgs...)
 		out = append(out, a)
 	}
 	return out, total, rows.Err()
+}
+
+func (s *AssetStore) ScopeApprovalRequired(taskID int64) (bool, error) {
+	var required bool
+	err := s.db.QueryRow(`SELECT scope_approval_required FROM tasks WHERE id=$1`, taskID).Scan(&required)
+	return required, err
 }

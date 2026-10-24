@@ -25,7 +25,10 @@ const judgeWorkerLane = "judge"
 // chatGuard returns a guard wired with the manager's interceptor, used for chat
 // conversations. Called once per applyLLM so a new LLM config always gets a fresh guard.
 func (s *Server) chatGuard() *guard.Guard {
-	return guard.NewWithInterceptor(s.m.interceptor)
+	g := guard.NewWithInterceptor(s.m.interceptor)
+	g.SetRoE(newRoEConfig(s.m.pg))
+	g.SetEgress(s.m.egress)
+	return g
 }
 
 // wireInterceptReviewer installs the LLM fallback judge into the interceptor. The
@@ -328,9 +331,9 @@ func interceptFilterParams(q url.Values) (db.InterceptApprovalFilter, error) {
 		return filter, fmt.Errorf("status 必须是 pending、allowed、denied 或 timeout")
 	}
 	switch filter.DecisionSource {
-	case "", "model", "rule", "unknown":
+	case "", "model", "rule", "unknown", "auto_allow":
 	default:
-		return filter, fmt.Errorf("decision_source 必须是 model、rule 或 unknown")
+		return filter, fmt.Errorf("decision_source 必须是 model、rule、auto_allow 或 unknown")
 	}
 	return filter, nil
 }

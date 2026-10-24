@@ -1,9 +1,13 @@
 ---
-
-## name: scopesentry-mcp
+name: scopesentry
 description: 通过 ScopeSentry MCP 管理安全扫描平台（项目、任务、模板、资产、节点）。在用户提到 ScopeSentry、MCP、API Key、扫描任务、资产查询时使用。
+---
 
 # ScopeSentry MCP 使用指南
+
+本仓库 Docker Compose 会随 ARTEX 启动 ScopeSentry 管理平台和扫描节点。首次启动自动为未配置地址的数据源写入 `http://scopesentry:8082/mcp` 和独立 `X-API-Key`，绑定 Auto 并发现工具；无需手动创建密钥。后续人工修改、关闭和解绑会保留。创建扫描任务仍须遵守当前任务授权与审批。
+
+独立或外部部署时，到 ARTEX「系统配置 → MCP」配置名为 `ScopeSentry` 的服务器：HTTP 传输、实际 `/mcp` URL，以及 `X-API-Key` 请求头；保存后刷新工具列表并绑定所需 Agent。没有服务地址时保持停用。
 
 面向**已部署 ScopeSentry 实例**的用户。通过 Cursor（或其他 MCP 客户端）连接平台，无需本地源码。
 

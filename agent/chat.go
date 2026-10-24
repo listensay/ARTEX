@@ -119,7 +119,9 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	// visible skills/MCP and lets the DB tools table filter/override. DefaultTools
 	// have no tools-table rows, so they always pass through.
 	base := actool.DefaultTools()
-	ctx = WithRunInfo(ctx, RunInfo{SessionID: sessionID})
+	ri := RunInfoFrom(ctx)
+	ri.SessionID = sessionID
+	ctx = WithRunInfo(ctx, ri)
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 

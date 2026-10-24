@@ -195,12 +195,36 @@ func (s *ExplorationStore) Root() (description, goal string, err error) {
 
 // AddNode writes a typed reasoning node with optional anchors to asset ids.
 func (s *ExplorationStore) AddNode(kind string, payload map[string]any, priority int, state, origin string, anchors []int64) (int64, error) {
-	raw, _ := json.Marshal(payload)
+	return s.addNodeWithOpenLimit(kind, payload, priority, state, origin, anchors, 0)
+}
+
+func (s *ExplorationStore) addNodeWithOpenLimit(kind string, payload map[string]any, priority int, state, origin string, anchors []int64, limit int) (int64, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	raw = jsonbClean(raw)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+	// Serialize all open-intent inserts, including the main agent's uncapped route.
+	if kind == KindIntent && state == "open" {
+		var expID int64
+		if err := tx.QueryRow(`SELECT id FROM explorations WHERE id=$1 FOR UPDATE`, s.expID).Scan(&expID); err != nil {
+			return 0, err
+		}
+		if limit > 0 {
+			var count int
+			if err := tx.QueryRow(`SELECT count(*) FROM exploration_nodes WHERE exploration_id=$1 AND kind='intent' AND state='open'`, s.expID).Scan(&count); err != nil {
+				return 0, err
+			}
+			if count >= limit {
+				return 0, fmt.Errorf("%w (%d open): 先消化存量，或用 cancel_intent 作废过期方向", ErrFrontierFull, count)
+			}
+		}
+	}
 	var id int64
 	if err := tx.QueryRow(`
 INSERT INTO exploration_nodes(exploration_id, kind, payload, priority, state, origin)

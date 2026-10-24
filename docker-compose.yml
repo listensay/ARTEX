@@ -1,4 +1,122 @@
+x-scopesentry-environment: &scopesentry-environment
+  MONGODB_IP: scopesentry-mongodb
+  MONGODB_PORT: "27017"
+  MONGODB_DATABASE: ScopeSentry
+  MONGODB_USER: scopesentry
+  REDIS_IP: scopesentry-redis
+  REDIS_PORT: "6379"
+
 services:
+  scopesentry-secrets:
+    image: python:3.12-slim-bookworm
+    command: [python3, /bootstrap/init-secrets.py]
+    volumes:
+      - ./deploy/scopesentry:/bootstrap:ro
+      - ./.secrets/scopesentry:/run/scopesentry-secrets
+    network_mode: none
+    restart: "no"
+
+  scopesentry-mongodb:
+    image: mongo:7.0.28
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: scopesentry
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/scopesentry-secrets/mongo-password
+    volumes:
+      - scopesentry-mongodb:/data/db
+      - ./.secrets/scopesentry:/run/scopesentry-secrets:ro
+    depends_on:
+      scopesentry-secrets:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD-SHELL, "mongosh --quiet --eval 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 20
+    networks: [scopesentry-database]
+    restart: unless-stopped
+
+  scopesentry-redis:
+    image: redis:7.4.11-bookworm
+    entrypoint: [sh, /bootstrap/redis.sh]
+    volumes:
+      - scopesentry-redis:/data
+      - ./deploy/scopesentry:/bootstrap:ro
+      - ./.secrets/scopesentry:/run/scopesentry-secrets:ro
+    depends_on:
+      scopesentry-secrets:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$(cat /run/scopesentry-secrets/redis-password)" redis-cli ping | grep -qx PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [scopesentry-database]
+    restart: unless-stopped
+
+  scopesentry:
+    image: ${SCOPESENTRY_IMAGE:-autumn27/scopesentry@sha256:7e32b3c491386dcb8f6d0f63443a6885085c627ed92b4d66e38cad7c39886436}
+    platform: linux/amd64
+    entrypoint: [sh, /bootstrap/entrypoint.sh, /opt/ScopeSentry/ScopeSentry]
+    environment:
+      <<: *scopesentry-environment
+      TIMEZONE: Asia/Shanghai
+    ports:
+      - "127.0.0.1:${SCOPESENTRY_PORT:-8082}:8082"
+    volumes:
+      - scopesentry-files:/opt/ScopeSentry/files
+      - scopesentry-images:/opt/ScopeSentry/images
+      - scopesentry-uploads:/opt/ScopeSentry/uploads
+      - ./deploy/scopesentry:/bootstrap:ro
+      - ./.secrets/scopesentry:/run/scopesentry-secrets:ro
+      - ./.secrets/scopesentry/login:/opt/ScopeSentry/login
+    depends_on:
+      scopesentry-mongodb:
+        condition: service_healthy
+      scopesentry-redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://127.0.0.1:8082/ >/dev/null']
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 60
+    networks: [scopesentry-database, scopesentry-api, egress]
+    restart: unless-stopped
+
+  scopesentry-api-init:
+    image: mongo:7.0.28
+    entrypoint: [mongosh, --nodb, --quiet, /bootstrap/bootstrap-api-key.js]
+    environment:
+      <<: *scopesentry-environment
+    volumes:
+      - ./deploy/scopesentry:/bootstrap:ro
+      - ./.secrets/scopesentry:/run/scopesentry-secrets:ro
+    depends_on:
+      scopesentry:
+        condition: service_healthy
+    networks: [scopesentry-database]
+    restart: "no"
+
+  scopesentry-scan:
+    image: ${SCOPESENTRY_SCAN_IMAGE:-autumn27/scopesentry-scan@sha256:55f803d76641e8a5143ac386360fb6c9602710492170a8fc50b0326dfb29fc04}
+    platform: linux/amd64
+    entrypoint: [sh, /bootstrap/entrypoint.sh, /apps/ScopeSentry-Scan]
+    environment:
+      <<: *scopesentry-environment
+      NodeName: ${SCOPESENTRY_NODE_NAME:-artex-local-1}
+      TimeZoneName: Asia/Shanghai
+    volumes:
+      - ./deploy/scopesentry:/bootstrap:ro
+      - ./.secrets/scopesentry:/run/scopesentry-secrets:ro
+    ulimits:
+      core: {soft: 0, hard: 0}
+    depends_on:
+      scopesentry-api-init:
+        condition: service_completed_successfully
+    networks: [scopesentry-database, egress]
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -12,6 +130,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks: [database]
     restart: unless-stopped
 
   artex:
@@ -28,6 +147,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      scopesentry-api-init:
+        condition: service_completed_successfully
+      scopesentry-scan:
+        condition: service_started
     environment:
       ARTEX_PG_DSN: postgres://${POSTGRES_USER:-artex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-artex}?sslmode=disable
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -36,23 +159,58 @@ services:
       ARTEX_LLM_MODEL: ${ARTEX_LLM_MODEL:-}
       ARTEX_LLM_BASE_URL: ${ARTEX_LLM_BASE_URL:-}
       ARTEX_LLM_PROXY: ${ARTEX_LLM_PROXY:-}
+      ARTEX_LLM_CALL_TIMEOUT: ${ARTEX_LLM_CALL_TIMEOUT:-600}
+      ARTEX_GATE: ${ARTEX_GATE:-on}
+      ARTEX_GATE_PATH: ${ARTEX_GATE_PATH:-}
+      ARTEX_GATE_TOKEN: ${ARTEX_GATE_TOKEN:-}
+      ARTEX_GATE_TTL_HOURS: ${ARTEX_GATE_TTL_HOURS:-}
+      ARTEX_SECRET_DIR: /app/secrets
+      ARTEX_TOOLS_MANIFEST: ${ARTEX_TOOLS_MANIFEST:-}
+      ARTEX_CALLBACK_ADDR: ${ARTEX_CALLBACK_ADDR:-}
+      ARTEX_TUNNEL_PORT_RANGE: ${ARTEX_TUNNEL_PORT_RANGE:-20000-20099}
+      ARTEX_TASK_PROXY: ${ARTEX_TASK_PROXY:-1}
+      ARTEX_TASK_PROXY_PORT_RANGE: ${ARTEX_TASK_PROXY_PORT_RANGE:-21100-21199}
+      ARTEX_SUO5_PATH: ${ARTEX_SUO5_PATH:-}
+      ARTEX_CHISEL_PATH: ${ARTEX_CHISEL_PATH:-}
+      ARTEX_SUO5_PAYLOADS_DIR: ${ARTEX_SUO5_PAYLOADS_DIR:-}
+      ARTEX_TRUSTED_PROXIES: ${ARTEX_TRUSTED_PROXIES:-}
+      ARTEX_ALLOWED_ORIGINS: ${ARTEX_ALLOWED_ORIGINS:-}
+      ARTEX_SCOPESENTRY_URL: http://scopesentry:8082/mcp
+      ARTEX_SCOPESENTRY_API_KEY_FILE: /app/secrets/scopesentry/api-key
     ports:
-      - "8787:8787"
+      - "${ARTEX_HTTP_BIND:-127.0.0.1}:8787:8787"
       - "127.0.0.1:8788:8788"
     volumes:
       # 把数据目录（含 jwt.key、SQLite 等）绑定到项目根目录的 data/，
       # 方便在宿主机直接查看/备份，容器重建也不丢。
       - ./data:/app/data
+      - ./.secrets:/app/secrets
       # 把项目根目录的 skills 挂进容器（覆盖镜像内置的 /app/skills）；
       # 改 skill 无需重建镜像，容器读的就是宿主机这份。
       - ./skills:/app/skills
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8787/api/health"]
+      test: ["CMD", "/app/artex", "-healthcheck"]
       interval: 5s
       timeout: 3s
       start_period: 30s
       retries: 12
+    networks: [database, scopesentry-api, egress]
+    stop_grace_period: 60s
     restart: unless-stopped
+
+networks:
+  database:
+    internal: true
+  scopesentry-database:
+    internal: true
+  scopesentry-api:
+    internal: true
+  egress: {}
 
 volumes:
   pgdata:
+  scopesentry-mongodb:
+  scopesentry-redis:
+  scopesentry-files:
+  scopesentry-images:
+  scopesentry-uploads:

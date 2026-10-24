@@ -81,6 +81,10 @@ jobs:
     needs: binaries
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: actions/download-artifact@v4
         with:
           pattern: pkg-*
@@ -89,17 +93,23 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: sha256sum *.zip > SHA256SUMS
+      - name: Sign checksums with fork release key
+        env:
+          ARTEX_RELEASE_SIGNING_KEY: ${{ secrets.ARTEX_RELEASE_SIGNING_KEY }}
+        run: go run ./cmd/release-sign sign dist/SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.zip
             dist/SHA256SUMS
+            dist/SHA256SUMS.minisig
           generate_release_notes: true
 
   # ④ 多架构镜像 → 推 Docker Hub（复用 binaries 编好的 Linux 二进制，
   #    镜像里只装工具 + 放二进制；arm64 仅需模拟 apt 层，构建快很多）
   docker:
     needs: binaries
+    if: vars.DOCKER_IMAGE != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # 取 Dockerfile 与 skills/
@@ -120,7 +130,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: autumn27/artex
+          images: ${{ vars.DOCKER_IMAGE }}
           tags: |
             type=ref,event=tag
             type=raw,value=latest

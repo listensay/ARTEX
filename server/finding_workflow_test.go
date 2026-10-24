@@ -97,7 +97,7 @@ func TestFindingWorkflowAutoHintToPlannerAndSetting(t *testing.T) {
 		t.Fatal("Planner missed runtime guidance")
 	}
 	report := workflowTool(t, tools, "report_finding")
-	result := workflowCall(t, ctx, report, map[string]any{"vulnclass": "TEST", "severity": "low", "summary": "Planner handoff fixture", "evidence_hint_id": hints.IDs[0]}, false)
+	result := workflowCall(t, ctx, report, map[string]any{"vulnclass": "TEST", "severity": "low", "summary": "Planner handoff fixture", "evidence": "handoff-baseline normal response compared with handoff-proof and handoff-verification", "evidence_hint_id": hints.IDs[0]}, false)
 	var recorded db.RecordedFinding
 	if err := json.Unmarshal([]byte(strings.SplitN(result, "\n", 2)[1]), &recorded); err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestFindingWorkflowAutoHintToPlannerAndSetting(t *testing.T) {
 	badHint := workflowCall(t, ctx, s.toolAddHint(), map[string]any{"task_id": task.ID, "text": "missing packet", "traffic_refs": []db.TrafficRef{{TrafficID: "missing"}}}, false)
 	var badID int64
 	fmt.Sscanf(badHint, "hint added: %d", &badID)
-	workflowCall(t, ctx, report, map[string]any{"vulnclass": "TEST", "severity": "low", "summary": "must fail", "evidence_hint_id": badID}, true)
+	workflowCall(t, ctx, report, map[string]any{"vulnclass": "TEST", "severity": "low", "summary": "must fail", "evidence": "fixture response differs from baseline", "evidence_hint_id": badID}, true)
 	if notices != 1 {
 		t.Fatal("failed handoff notified before commit")
 	}
@@ -166,7 +166,7 @@ func TestFindingWorkflowAutoHintToPlannerAndSetting(t *testing.T) {
 	workflowCall(t, ctx, bind, input, true)
 	// Turning binding off must still save a confirmed finding from an already
 	// assembled tool, even if the model sends the old optional evidence fields.
-	offResult := workflowCall(t, ctx, report, map[string]any{"vulnclass": "TEST", "severity": "low", "summary": "off", "evidence_hint_id": hints.IDs[0]}, false)
+	offResult := workflowCall(t, ctx, report, map[string]any{"vulnclass": "TEST", "severity": "low", "summary": "off", "evidence": "fixture response differs from baseline", "evidence_hint_id": hints.IDs[0]}, false)
 	var offRecord struct {
 		db.RecordedFinding
 		EvidenceStatus string `json:"evidence_status"`
@@ -178,7 +178,7 @@ func TestFindingWorkflowAutoHintToPlannerAndSetting(t *testing.T) {
 	if offRecord.FindingID <= 0 || len(offRecord.Traffic.Bindings) != 0 || offRecord.EvidenceStatus != "not_bound" || !strings.Contains(offRecord.EvidenceNote, "已关闭") {
 		t.Fatal("disabled binding discarded finding or bound evidence", offResult)
 	}
-	workflowCall(t, ctx, report, map[string]any{"vulnclass": "TCP", "severity": "low", "summary": "no packet needed"}, false)
+	workflowCall(t, ctx, report, map[string]any{"vulnclass": "TCP", "severity": "low", "summary": "no packet needed", "evidence": "fixture TCP command output proves the finding"}, false)
 	if notices != 3 {
 		t.Fatal("optional no-packet report failed")
 	}

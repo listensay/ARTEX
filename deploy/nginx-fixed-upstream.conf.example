@@ -1,0 +1,37 @@
+# Place inside nginx's http{} context. Replace example.invalid and the single
+# business upstream with your actual public business site. This does not publish
+# ARTEX; keep management behind a separate VPN/network.
+map $http_host $business_host_allowed {
+    default 0;
+    example.invalid 1;
+    example.invalid:80 1;
+}
+
+upstream business_backend {
+    server 127.0.0.1:8080;
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+
+server {
+    listen 80;
+    server_name example.invalid;
+    if ($business_host_allowed = 0) { return 444; }
+    if ($request_method = CONNECT) { return 405; }
+
+    location / {
+        # Never use $host/$http_host or a client-supplied address in proxy_pass.
+        proxy_pass http://business_backend;
+        proxy_set_header Host example.invalid;
+        proxy_set_header X-Forwarded-Host example.invalid;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_intercept_errors on;
+        error_page 500 502 503 504 = @upstream_error;
+    }
+    location @upstream_error { return 503; }
+}

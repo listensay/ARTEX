@@ -1,5 +1,6 @@
 "use client";
 
+import { HoneypotBadge } from "@/components/honeypot-badge";
 import * as React from "react";
 
 import {
@@ -589,7 +590,7 @@ export function AssetsTab({ taskId }: { taskId: string }) {
 
         <TabsContent value="service" className="mt-0 flex min-h-0 flex-1 flex-col">
           <AssetCard
-            cols={["地址 / 服务", "状态码", "标题", "响应长度", "指纹", "认证", "来源", "操作"]}
+            cols={["地址 / 服务", "状态码", "标题", "响应长度", "指纹", "蜜罐信号", "认证", "来源", "操作"]}
             {...commonCardProps}
           >
             {rows.map((asset) => {
@@ -617,6 +618,9 @@ export function AssetsTab({ taskId }: { taskId: string }) {
                   <TableCell className="text-xs tabular-nums">{fmtBytes(asset.content_length)}</TableCell>
                   <TableCell>
                     <Chips items={asset.technologies ?? []} />
+                  </TableCell>
+                  <TableCell>
+                    <HoneypotBadge score={asset.honeypot_score} evidence={asset.honeypot_evidence} />
                   </TableCell>
                   <TableCell>
                     {(asset.auth ?? []).length === 0 ? (

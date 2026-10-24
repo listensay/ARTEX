@@ -469,7 +469,13 @@ func (s *Server) runConversation(c *db.Conversation, msg, busyKey string, userMe
 	if len(userMessage) == 1 {
 		ctx = intercept.WithReviewContext(ctx, "", intercept.ReviewBackground{Source: intercept.BackgroundUserMessage, Text: userMessage[0]})
 	}
-	go s.runConversationTurn(ctx, cancel, c, msg, busyKey)
+	if !s.startBackground(func() { s.runConversationTurn(ctx, cancel, c, msg, busyKey) }) {
+		cancel(context.Canceled)
+		s.chatMu.Lock()
+		delete(s.chatBusy, busyKey)
+		delete(s.chatCancel, busyKey)
+		s.chatMu.Unlock()
+	}
 }
 
 // runConversationSync runs ONE agent turn on a conversation and BLOCKS until the
@@ -535,6 +541,50 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 				return
 			}
 		}
+	}
+	if c.AgentKey == db.FindingVerifierAgentKey {
+		check, err := s.m.pg.FindingCheckForConversation(context.Background(), c.ID)
+		if err != nil {
+			_ = s.m.pg.FailPendingCheckForConversation(c.ID, "验证状态读取失败，请重新发起")
+			return
+		}
+		if check == nil {
+			return
+		} // ordinary chats cannot impersonate a check
+		if check.Status == "pending" {
+			defer func() {
+				if ctx.Err() != nil {
+					finishStatus, finishReason = "stopped", "验证已停止或服务已关闭"
+				}
+				s.finishCheck(check.ID, finishStatus, finishReason)
+			}()
+			if ctx.Err() != nil {
+				return
+			}
+			started, err := s.m.pg.StartFindingCheck(ctx, check.ID)
+			if err != nil {
+				finishReason = err.Error()
+				return
+			}
+			if !started {
+				return
+			}
+		}
+		if check.SourceTaskID == nil {
+			finishReason = "原任务不存在，无法加载授权范围"
+			return
+		}
+		task, err := s.m.pg.GetTask(*check.SourceTaskID)
+		if err != nil {
+			finishReason = "原任务读取失败"
+			return
+		}
+		if task == nil {
+			finishReason = "原任务已删除，验证已停止"
+			return
+		}
+		ctx = agent.WithRunInfo(ctx, agent.RunInfo{TaskID: task.ID, ExplorationID: task.ExplorationID})
+		ctx = intercept.WithTaskContext(ctx, strconv.FormatInt(task.ID, 10), c.AgentKey, nil)
 	}
 	if ctx.Err() != nil {
 		return

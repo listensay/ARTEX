@@ -25,7 +25,10 @@ import (
 	"github.com/Autumn-27/artex/llmpool"
 	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/report"
+	"github.com/Autumn-27/artex/session"
+	"github.com/Autumn-27/artex/stage"
 	"github.com/Autumn-27/artex/traffic"
+	"github.com/Autumn-27/artex/tunnel"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 	"github.com/Autumn-27/norma/transcript"
@@ -39,9 +42,19 @@ var BuildVersion = "dev"
 // Server exposes the ARTEX backend over a JSON HTTP API for the shadcn/ui
 // frontend.
 type Server struct {
-	m      *Manager
-	engine *Engine
-	ctx    context.Context
+	resourceCtx  context.Context
+	sessReg      *session.Registry
+	sessStore    *db.SessionStore
+	credStore    *db.CredentialStore
+	tunnels      *tunnel.Manager
+	stage        *stage.Manager
+	gate         *Gate
+	m            *Manager
+	engine       *Engine
+	ctx          context.Context
+	backgroundMu sync.Mutex
+	backgroundWG sync.WaitGroup
+	closing      bool
 
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
@@ -141,6 +154,8 @@ type triggeredRun struct {
 }
 
 func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDir string) *Server {
+	ctx, stopServer := context.WithCancel(ctx)
+	checkToolsManifest(dataDir)
 	key, err := loadOrCreateJWTKey(keyDir, dataDir)
 	if err != nil {
 		log.Fatalf("[auth] JWT key: %v", err)
@@ -151,7 +166,34 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		profChatAgents: map[int64]*agent.ChatAgent{},
 		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
+	s.bootstrapScopeSentry()
+	s.registerEgressFingerprints()
 	s.initSideQuestions()
+	resourceCtx, resourceCancel := context.WithCancel(ctx)
+	s.resourceCtx = resourceCtx
+	m.intranetClose = func() {
+		s.backgroundMu.Lock()
+		s.closing = true
+		s.backgroundMu.Unlock()
+		stopServer()
+		resourceCancel()
+		s.engine.Close()
+		s.backgroundWG.Wait()
+		s.archiveWG.Wait()
+		if s.side != nil {
+			<-s.side.done
+		}
+		if s.tunnels != nil {
+			s.tunnels.Close()
+		}
+		if s.stage != nil {
+			s.stage.Close()
+		}
+	}
+	s.initStage(dataDir)
+	s.initSessions()
+	s.initCredentials()
+	s.initTunnels(dataDir)
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
 	// 之后每次保存策略再推一次（saveLLMRetryPolicy）。
 	s.applyRetryPolicy()
@@ -221,19 +263,27 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg) // 内置工具表：按 agent 过滤 + 覆盖描述/schema + 注入默认值
 		seedPrompts(m.pg)          // 内置 agent 默认提示词正文播种进 agent_prompts(仅空时)
+		s.seedSessionTools()
+		s.seedCredentialTools()
+		s.seedTunnelTools()
+		s.seedStageShareTool()
 		s.seedOrchestrationTools() // P2 跨任务编排工具 seed 进 tools 表(可按 agent 绑定)
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
 		}
-		go s.evidenceStore().RunGC(s.ctx)
-		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
-		go newScheduler(s).Run(s.ctx) // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
+		if err := s.seedFindingVerifier(); err != nil {
+			log.Printf("[verifier] seed: %v", err)
+		}
+		s.startBackground(s.runFindingVerifyQueue)
+		s.startBackground(func() { s.evidenceStore().RunGC(s.ctx) })
+		s.seedPythonInterpreter()                                // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
+		s.startBackground(func() { newScheduler(s).Run(s.ctx) }) // P3 触发器调度
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
-		go newNotifier(s).Run(s.ctx)
+		s.startBackground(func() { newNotifier(s).Run(s.ctx) })
 		// Fill the tool cache for any enabled MCP that has none yet (notably the
 		// seeded browser MCP on first run). Async so it never blocks startup.
-		go s.discoverEmptyMCPsOnStartup()
+		s.startBackground(s.discoverEmptyMCPsOnStartup)
 		logSink.SetDB(ctx, m.pg) // restore last 100 log rows and enable async persistence
 	}
 	// precedence: persisted DB config > env.
@@ -253,7 +303,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		log.Printf("[engine] no LLM provider configured — engine idle until set via /api/llm or env")
 	}
 	s.restoreTaskRuntimes()
-	go s.reconcileConcurrency()
+	s.startBackground(s.reconcileConcurrency)
 	s.startTaskArchiveWorker()
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
 	return s
@@ -267,6 +317,9 @@ func (s *Server) restoreTaskRuntimes() {
 	// restore persisted paused state (so a task paused before restart stays paused).
 	for _, t := range m.LoadExisting() {
 		lifecycle := t.lifecycleSnapshot()
+		if s.awaitingHandoffStart(t) {
+			continue
+		}
 		// clear stale 'running' intents from a prior crash/restart (no live worker
 		// owns them) so they re-claim instead of spinning forever in the UI.
 		if n, _ := t.Store.ResetRunningIntents(); n > 0 {
@@ -287,7 +340,7 @@ func (s *Server) restoreTaskRuntimes() {
 	// FIFO. Paused loops remain idle; queued tasks are admitted below as slots allow.
 	for _, t := range m.List() {
 		lifecycle := t.lifecycleSnapshot()
-		if !lifecycle.Queued && !isTerminalStatus(lifecycle.Status) {
+		if !lifecycle.Queued && !isTerminalStatus(lifecycle.Status) && !s.awaitingHandoffStart(t) {
 			s.engine.Run(s.ctx, t)
 		}
 	}
@@ -388,6 +441,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 // saving or activating a profile takes effect without a restart. Best-effort:
 // logs on failure and leaves the running engine untouched.
 func (s *Server) reapplyActiveProfile() {
+	s.registerEgressFingerprints()
 	cfg, ok := s.loadLLMConfig()
 	if !ok {
 		return
@@ -426,6 +480,10 @@ func maxTokensResolver(cfg agent.Config) func() int {
 // applyLLM (re)builds the planner/worker/main-agent from cfg and installs them on
 // the running engine as the GLOBAL active pair. Safe to call at runtime (UI configures LLM).
 func (s *Server) applyLLM(cfg agent.Config) error {
+	s.registerEgressFingerprints()
+	if s.m.egress != nil {
+		s.m.egress.AddFingerprint("llm_api_key", cfg.APIKey)
+	}
 	var prov llm.Provider
 	// A persisted active profile must use the same cached provider as task chains
 	// and Agent bindings, otherwise each path owns a separate rate limiter.
@@ -650,12 +708,14 @@ func (s *Server) chatAgentRef() *agent.ChatAgent {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.registerSideRoutes(mux)
+	s.registerIntranetRoutes(mux)
 
 	// Auth routes — exempt from JWT check (handled in requireAuth)
 	mux.HandleFunc("GET /api/auth/status", s.authStatus)
 	mux.HandleFunc("POST /api/auth/init", s.authInit)
 	mux.HandleFunc("POST /api/auth/login", s.authLogin)
 	mux.HandleFunc("POST /api/auth/change-password", s.authChangePassword)
+	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
 
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/stats", s.stats)
@@ -763,6 +823,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/exploration/findings/{id}/lineage", s.findingLineage)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/deepen", s.deepenFinding)
 	mux.HandleFunc("GET /api/exploration/findings/{id}/retests", s.listFindingRetests)
+	mux.HandleFunc("GET /api/exploration/findings/{id}/checks", s.listFindingChecks)
+	mux.HandleFunc("POST /api/exploration/findings/{id}/checks", s.startFindingCheck)
+	mux.HandleFunc("GET /api/finding-verify-mode", s.findingVerifyModeGet)
+	mux.HandleFunc("PUT /api/finding-verify-mode", s.findingVerifyModeSet)
 	mux.HandleFunc("GET /api/exploration/findings/retests/active", s.listActiveFindingRetests)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/retests", s.startFindingRetest)
 	mux.HandleFunc("PATCH /api/exploration/findings/{id}", s.patchFinding)
@@ -931,6 +995,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/intercept/judge", s.interceptGetJudgeConfig)
 	mux.HandleFunc("PUT /api/intercept/judge", s.interceptSetJudgeConfig)
 	mux.HandleFunc("GET /api/intercept/judge/usage", s.interceptJudgeUsage) // 兜底审批累计 token 用量
+	mux.HandleFunc("GET /api/guard/auto-allow", s.guardAutoAllowGet)
+	mux.HandleFunc("PUT /api/guard/auto-allow", s.guardAutoAllowSet)
 
 	// /api/* goes through CORS + JWT; everything else is served by the embedded
 	// frontend (public — auth is enforced client-side and on the API). With the
@@ -938,8 +1004,18 @@ func (s *Server) Handler() http.Handler {
 	api := cors(s.requireAuth(mux))
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
+	root.HandleFunc("GET /s/{token}/{name}", s.stageDownload)
 	root.Handle("/", s.webuiHandler())
-	return root
+	return s.gate.wrap(root)
+}
+
+// SetGate installs the concealment layer before the HTTP server starts.
+func (s *Server) SetGate(g *Gate) {
+	s.gate = g
+	if g != nil && s.stage != nil {
+		g.resourceAuthorized = s.stage.AuthorizedRequest
+	}
+	s.registerEgressFingerprints()
 }
 
 // --- handlers ---
@@ -3290,6 +3366,11 @@ func (s *Server) settingsPayload() map[string]any {
 		concLimit = defaultConcurrencyLimit // 关闭时也回显一个合理默认值给 UI
 	}
 	return map[string]any{
+		"roe_enforcement":          newRoEConfig(s.m.pg).Mode(),
+		"tarpit_fetch_budget":      s.tarpitBudget(),
+		"web_ua_pool":              s.effectiveUAPool(),
+		"gate_enabled":             s.gate != nil,
+		"gate_path":                s.gatePath(),
 		"traffic_capture":          s.m.TrafficEnabled(),
 		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
 		"llm_record":               s.m.LLMRecordEnabled(),
@@ -3359,10 +3440,14 @@ func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 // agents (applyLLM) so the new proxy/traffic-tools/prompt state takes hold — when
 // off, agents get no proxy config, no traffic tools, and no proxy prompt content.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	defer s.registerEgressFingerprints()
 	var req struct {
-		TrafficCapture      *bool `json:"traffic_capture"`
-		AgentTrafficBinding *bool `json:"agent_traffic_binding"`
-		LLMRecord           *bool `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
+		RoEEnforcement      *string   `json:"roe_enforcement"`
+		TarpitFetchBudget   *int      `json:"tarpit_fetch_budget"`
+		WebUAPool           *[]string `json:"web_ua_pool"`
+		TrafficCapture      *bool     `json:"traffic_capture"`
+		AgentTrafficBinding *bool     `json:"agent_traffic_binding"`
+		LLMRecord           *bool     `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -3394,6 +3479,47 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+
+	if req.TarpitFetchBudget != nil && (*req.TarpitFetchBudget < 1 || *req.TarpitFetchBudget > 10000) {
+		writeErr(w, 400, "tarpit_fetch_budget 必须为 1–10000")
+		return
+	}
+	if req.WebUAPool != nil {
+		if len(*req.WebUAPool) > 64 {
+			writeErr(w, 400, "web_ua_pool 最多 64 项")
+			return
+		}
+		for _, ua := range *req.WebUAPool {
+			if strings.TrimSpace(ua) == "" || len(ua) > 512 || strings.ContainsAny(ua, "\r\n\x00") {
+				writeErr(w, 400, "UA 必须为非空且不含换行的 HTTP 头值，最长 512 字节")
+				return
+			}
+		}
+	}
+	if req.TarpitFetchBudget != nil {
+		if err := s.m.pg.SetSetting(settingTarpitFetchBudget, strconv.Itoa(*req.TarpitFetchBudget)); err != nil {
+			writeErr(w, 500, "保存抓取预算失败")
+			return
+		}
+	}
+	if req.WebUAPool != nil {
+		raw, _ := json.Marshal(*req.WebUAPool)
+		if err := s.m.pg.SetSetting(settingWebUAPool, string(raw)); err != nil {
+			writeErr(w, 500, "保存 UA 池失败")
+			return
+		}
+	}
+	if req.RoEEnforcement != nil {
+		mode := strings.ToLower(strings.TrimSpace(*req.RoEEnforcement))
+		if mode != "off" && mode != "warn" && mode != "strict" {
+			writeErr(w, 400, "roe_enforcement 必须是 off、warn 或 strict")
+			return
+		}
+		if err := s.m.pg.SetSetting(settingRoEEnforcement, mode); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if req.ConstraintsInjectPlanner != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectPlanner, *req.ConstraintsInjectPlanner); err != nil {
@@ -3879,9 +4005,17 @@ func (s *Server) gc(w http.ResponseWriter, r *http.Request) {
 
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Add("Vary", "Origin")
+		if !originAllowed(r) {
+			writeErr(w, 403, "请求来源未获允许")
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Artex-CSRF")
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
 			return

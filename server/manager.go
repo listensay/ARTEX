@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -15,11 +16,14 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/agent"
+	"github.com/Autumn-27/artex/config"
 	pgdb "github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/enrich"
 	"github.com/Autumn-27/artex/guard"
+	"github.com/Autumn-27/artex/honeydetect"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/traffic"
+	"github.com/Autumn-27/artex/tunnel"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -216,12 +220,22 @@ type DeleteTaskResult struct {
 // Manager owns the PostgreSQL data source (asset graph + every task's exploration
 // graph + config) and the in-memory set of task handles.
 type Manager struct {
-	dir         string
-	pg          *pgdb.DB
-	assets      *pgdb.AssetStore
-	traffic     *traffic.Traffic       // process-wide recording proxy (may be nil)
-	enrich      *enrich.Engine         // engine-side asset auto-completion (DNS/HTTP)
-	interceptor *intercept.Interceptor // user-configured tool-call interception rules
+	closeOnce           sync.Once
+	closeErr            error
+	intranetClose       func()
+	intranetTaskCleanup func(int64)
+	taskProxy           *taskProxyManager
+	managedPorts        sync.Map
+	auditCancel         context.CancelFunc
+	auditWG             sync.WaitGroup
+	closed              bool
+	egress              *guard.EgressGuard
+	dir                 string
+	pg                  *pgdb.DB
+	assets              *pgdb.AssetStore
+	traffic             *traffic.Traffic       // process-wide recording proxy (may be nil)
+	enrich              *enrich.Engine         // engine-side asset auto-completion (DNS/HTTP)
+	interceptor         *intercept.Interceptor // user-configured tool-call interception rules
 
 	companyMu sync.Mutex // serializes task/company-scope commits with live handle registration
 	// taskStateMu preserves commit order between PostgreSQL lifecycle writes and
@@ -354,6 +368,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
+	honeydetect.SetSignaturesPath(filepath.Join(dir, "signatures", "honeypot.json"))
 	dsn, source, err := pgdb.DSN()
 	if err != nil {
 		return nil, err
@@ -367,13 +382,17 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		pg.Close()
 		return nil, fmt.Errorf("recover finding retests: %w", err)
 	}
+	if err := pg.RecoverFindingChecks(); err != nil {
+		pg.Close()
+		return nil, fmt.Errorf("recover finding checks: %w", err)
+	}
 	if err := pg.EnsureLLMRecordsTable(); err != nil {
 		log.Printf("[llmrec] create table: %v", err)
 	}
 	if err := pg.EnsureLLMUsageTable(); err != nil {
 		log.Printf("[llmusage] create table: %v", err)
 	}
-	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
+	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg), egress: guard.NewEgressGuard()}
 	if proxyAddr != "" {
 		tr, err := traffic.Open(filepath.Join(dir, "traffic"), proxyAddr)
 		if err != nil {
@@ -410,6 +429,14 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	// Asset auto-completion engine (§5): HTTP probes routed through the recording
 	// proxy (via m.ProxyAddr, which honors the traffic-capture toggle).
 	m.trafficOn = pg.GetBool(settingTrafficCapture, false)
+	if config.TaskProxyEnabled() {
+		pmin, pmax, e := tunnel.ParsePortRange(config.TaskProxyPortRange())
+		if e == nil {
+			m.taskProxy = newTaskProxyManager(dir, pgdb.NewTunnelStore(pg), m.GlobalProxy, pmin, pmax)
+			m.taskProxy.onStart = m.registerManagedPort
+			m.taskProxy.onStop = m.unregisterManagedPort
+		}
+	}
 	// LLM 录制开关（默认关）。录制器每次调用时读取此标志。
 	m.llmRecOn = pg.GetBool(settingLLMRecord, false)
 	// Load persisted web-search config (default: off, ddgs).
@@ -801,12 +828,29 @@ func (m *Manager) SetGlobalProxy(raw string) error {
 }
 
 func (m *Manager) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.traffic != nil {
-		m.traffic.Close()
-	}
-	return m.pg.Close()
+	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		m.closed = true
+		cancel := m.auditCancel
+		m.mu.Unlock()
+		if cancel != nil {
+			cancel()
+			m.auditWG.Wait()
+		}
+		if m.intranetClose != nil {
+			m.intranetClose()
+		}
+		if m.taskProxy != nil {
+			m.taskProxy.Close()
+		}
+		if m.traffic != nil {
+			_ = m.traffic.Close()
+		}
+		if m.pg != nil {
+			m.closeErr = m.pg.Close()
+		}
+	})
+	return m.closeErr
 }
 
 // isTerminalStatus reports whether a task status is terminal (done/failed/timeout).
@@ -828,7 +872,13 @@ func unixNanoOrZero(t *time.Time) int64 {
 	return t.UnixNano()
 }
 
-func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Interceptor) *Task {
+func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Interceptor, pg *pgdb.DB, eg ...*guard.EgressGuard) *Task {
+	g := guard.NewWithInterceptor(ic)
+	g.SetRoE(newRoEConfig(pg))
+	if len(eg) > 0 {
+		g.SetEgress(eg[0])
+	}
+	g.SetTarpit(newTarpitConfig(pg, store))
 	return &Task{
 		ID: strconv.FormatInt(pt.ID, 10), ExpID: pt.ExplorationID,
 		Name:       pt.Name,
@@ -846,7 +896,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		TimeoutSeconds: pt.TimeoutSeconds, PlanHeartbeatSeconds: pt.PlanHeartbeatSeconds,
 		CoverageEnabled: pt.CoverageEnabled,
 		FirstRunAt:      unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
-		Store: store, Guard: guard.NewWithInterceptor(ic), notify: make(chan struct{}, 1),
+		Store: store, Guard: g, notify: make(chan struct{}, 1),
 	}
 }
 
@@ -897,7 +947,7 @@ func (m *Manager) CreateTaskWithOptions(description, goal string, opts pgdb.Task
 	if err != nil {
 		return nil, err
 	}
-	t := taskFromPG(pt, m.pg.Exploration(pt.ExplorationID), m.interceptor)
+	t := taskFromPG(pt, m.pg.Exploration(pt.ExplorationID), m.interceptor, m.pg, m.egress)
 	m.mu.Lock()
 	m.tasks[t.ID] = t
 	m.active = t.ID
@@ -1096,7 +1146,7 @@ func (m *Manager) LoadExisting() []*Task {
 		if _, ok := m.tasks[id]; ok {
 			continue
 		}
-		t := taskFromPG(pt, m.pg.Exploration(pt.ExplorationID), m.interceptor)
+		t := taskFromPG(pt, m.pg.Exploration(pt.ExplorationID), m.interceptor, m.pg, m.egress)
 		m.tasks[id] = t
 		loaded = append(loaded, t)
 	}
@@ -1450,6 +1500,10 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 		return result, err
 	}
 	if registered == nil {
+		if m.intranetTaskCleanup != nil {
+			m.intranetTaskCleanup(n)
+		}
+		m.CloseTaskProxy(n)
 		m.forgetTask(id, n)
 		return result, nil
 	}
@@ -1489,6 +1543,9 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 	result.AssetsDetached = dbResult.AssetsDetached
 	result.FindingsDeleted = dbResult.FindingsDeleted
 	result.LLMRecordsDeleted = dbResult.LLMRecordsDeleted
+	if m.intranetTaskCleanup != nil {
+		m.intranetTaskCleanup(n)
+	}
 
 	// PostgreSQL is now authoritative: finalize the staged external deletion and
 	// forget the live task even if a final purge reports an error. Such errors are
@@ -1857,4 +1914,33 @@ func (t *Task) drainTriggers() []agent.TriggerEvent {
 	ev := t.pendingTriggers
 	t.pendingTriggers = nil
 	return ev
+}
+
+func (m *Manager) TaskProxyForTask(taskID int64) (addr, caCert string) {
+	if m.taskProxy == nil || !m.TrafficEnabled() {
+		return "", ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return m.taskProxy.ForTask(ctx, taskID)
+}
+
+// RefreshTaskProxy re-resolves one task's MITM upstream after a tunnel state
+// change (tunnel.Manager.OnStateChange). No-op when the feature is off or the
+// task has no live instance (lazy-build semantics).
+func (m *Manager) RefreshTaskProxy(taskID int64) {
+	if m.taskProxy == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.taskProxy.Refresh(ctx, taskID)
+}
+
+// CloseTaskProxy destroys a task's MITM instance (task deleted/archived). The
+// recorded tree (incl. CA dir) stays on disk — evidence is not instance lifetime.
+func (m *Manager) CloseTaskProxy(taskID int64) {
+	if m.taskProxy != nil {
+		m.taskProxy.CloseTask(taskID)
+	}
 }

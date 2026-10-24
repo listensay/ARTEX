@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Autumn-27/artex/agent/chainskel"
 	"github.com/Autumn-27/artex/db"
 	acperm "github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
@@ -60,6 +61,7 @@ type ToolSet struct {
 	as              *db.AssetStore   // asset store (optional; nil = asset tools not available)
 	cs              *db.CompanyStore // company store (optional)
 	ts              *db.ExplorationStore
+	maxOpenIntents  int // set only for planner runs; human direct injection remains available
 	worker          string
 	taskID          int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
@@ -469,6 +471,11 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		findingList = append(findingList, m)
 	}
 	out["finding_list"] = findingList
+	if t.as != nil && t.taskID > 0 {
+		if pots, err := t.as.HoneypotAssetsByTask(t.taskID, 20); err == nil && len(pots) > 0 {
+			out["honeypot_assets"] = pots
+		}
+	}
 	// recent_facts：非折叠事实里最新的一窗（≤N，factNodes 按 id 降序即最新在前）。已折进
 	// digest 且仍冷的（hidden）走 cold_digests，不在此重复。每条 {id, summary, from_intent?,
 	// confidence?}；evidence 等详情用 node_detail(id)。更早的用 list_facts 翻。
@@ -1028,6 +1035,7 @@ type intentItem struct {
 	AssetIDs  []json.RawMessage `json:"asset_ids"`
 	ParentIDs []json.RawMessage `json:"parent_ids"`
 	Priority  int               `json:"priority"`
+	ChainTags []string          `json:"chain_tags"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
@@ -1037,6 +1045,10 @@ type intentItem struct {
 func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, fmt.Errorf("summary 不能为空")
+	}
+	tags := chainskel.NormalizeChainTags(it.ChainTags)
+	if err := chainskel.ValidateChainTags(tags); err != nil {
+		return 0, err
 	}
 	// 先校验锚点（建节点前，避免坏锚点留下孤儿意图）。
 	parents := pidList(it.ParentIDs)
@@ -1073,7 +1085,14 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if len(anchors) > 0 {
 		payload["asset_ids"] = anchors
 	}
-	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
+	if len(tags) > 0 {
+		payload["chain_tags"] = tags
+	}
+	origin := t.worker
+	if origin == "human" || origin == "" {
+		origin = "mainagent"
+	}
+	id, err := t.ts.AddIntentWithLimit(payload, priority, anchors, origin, t.maxOpenIntents)
 	if err != nil {
 		return 0, err
 	}
@@ -1101,6 +1120,7 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"summary":    str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
+			"chain_tags": map[string]any{"type": "array", "maxItems": 2, "items": map[string]any{"type": "string", "enum": chainskel.Categories}, "description": "可选：主要攻击面 web/ad/app/priv/pwn/recon/rev/pivot/meta，最多两个；留空按 summary 自动匹配场景骨架。"},
 			"priority":   intp("优先级 0-10，默认5"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
@@ -1225,13 +1245,19 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 	return writeTool("report_finding", "记录确认的漏洞，用 evidence 提供命令输出、日志等可验证证据。任务上下文传当前 intent_id。返回的 finding_id 是独立漏洞记录 ID，finding_node_id 是探索节点 ID（第一行保留该节点编号）。", obj(map[string]any{
 		"vulnclass": str("漏洞类别"), "name": str("漏洞名称"), "severity": str("critical|high|medium|low"), "summary": str("发现摘要"),
 		"intent_id": idp("当前任务的意图 id"), "asset_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "受影响资产 id"},
-		"evidence":         str("证据/PoC 文本"),
+		"entry":            str("可选：具体受影响的绝对 HTTP/HTTPS URL；同任务、主资产、类别、入口、方法和参数位置一致才合并。不要填写 PoC 外的站点首页。"),
+		"method":           str("可选：HTTP 方法，例如 GET/POST；与 entry、parameter 一同填写"),
+		"parameter":        str("可选：精确参数位置/名称与身份条件，例如 query:id、body:username、authorization:guest->owner；不同根因/条件用不同值，不确定则省略并新增记录"),
+		"evidence":         str("本次实际证据/PoC 与正常对照；先调用 get_verifier_checklist 排除对应类别误报。"),
+		"verdict":          map[string]any{"type": "string", "enum": []string{"verified", "false_positive", "inconclusive"}, "description": "反证结论：verified 才登记漏洞；false_positive/inconclusive 只写事实，不新增漏洞。兼容旧调用：省略表示 verified。"},
 		"evidence_hint_id": idp("可选：本任务中对应此漏洞的提示节点 ID，自动携带其结构化 traffic_refs；不能引用继承提示或其他漏洞的提示"),
 		"traffic_refs": map[string]any{"type": "array", "description": "可选；HTTP/HTTPS 漏洞先检索并逐条核实请求/响应确实支持漏洞结论，再按复现顺序填写真实 ID。TCP 等非 HTTP 漏洞、未采集或找不到确切记录时省略或传 []，不阻止上报；可在 evidence 说明原因并提供其他可验证证据。不要猜测 ID、按域名/时间推定关联或仅为补包重复探测。用途 baseline 正常对照 / proof 漏洞证明 / verification 补充验证 / supporting 辅助证据。",
 			"items": obj(map[string]any{"traffic_id": str("traffic_search 返回的真实流量 ID"), "role": map[string]any{"type": "string", "enum": []string{"baseline", "proof", "verification", "supporting"}}, "note": str("该流量如何支持漏洞结论")}, "traffic_id")},
 	}, "vulnclass", "severity", "summary"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 		var a struct {
 			VulnClass, Name, Severity, Summary, Evidence string
+			Entry, Method, Parameter                     string
+			Verdict                                      string            `json:"verdict"`
 			IntentID                                     json.RawMessage   `json:"intent_id"`
 			AssetIDs                                     []json.RawMessage `json:"asset_ids"`
 			TrafficRefs                                  []db.TrafficRef   `json:"traffic_refs"`
@@ -1242,6 +1268,23 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		}
 		if t.ts == nil {
 			return actool.Errorf("report_finding 需要任务上下文；平台对话请通过 add_task_hint 向对应任务交接漏洞，并在提示中携带已有的 traffic_refs，由任务 Agent 登记。已登记漏洞可用 bind_finding_traffic 补绑。"), nil
+		}
+
+		if a.Verdict != "" && a.Verdict != "verified" && a.Verdict != "false_positive" && a.Verdict != "inconclusive" {
+			return actool.Errorf("verdict 必须为 verified/false_positive/inconclusive"), nil
+		}
+		if a.Verdict == "false_positive" || a.Verdict == "inconclusive" {
+			if strings.TrimSpace(a.Evidence) == "" {
+				return actool.Errorf("证伪或无法确认结论必须提供实际证据/阻塞原因"), nil
+			}
+			factID, err := t.recordOneFact(factItem{Summary: a.Summary, Detail: "反证结论: " + a.Verdict + "; 类别: " + a.VulnClass, Evidence: a.Evidence, Confidence: "observed", IntentID: a.IntentID, AssetIDs: a.AssetIDs}, t.ownerNode)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			return actool.Text(fmt.Sprintf("fact recorded: %d; verdict=%s; 未登记漏洞", factID, a.Verdict)), nil
+		}
+		if strings.TrimSpace(a.Evidence) == "" {
+			return actool.Errorf("确认漏洞必须提供本次实际验证证据；仅指纹/版本匹配或无法确认请用 record_fact"), nil
 		}
 		// Auto-binding off: ignore the evidence params instead of rejecting the call.
 		// stripTrafficParameters already removes them from the advertised schema, but
@@ -1258,7 +1301,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		if err != nil {
 			return actool.Errorf(err.Error()), nil
 		}
-		input := db.RecordFindingInput{TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: pid(a.IntentID), VulnClass: a.VulnClass, Name: a.Name, Severity: a.Severity, Summary: a.Summary, Evidence: a.Evidence, Worker: t.worker, AssetIDs: pidList(a.AssetIDs)}
+		input := db.RecordFindingInput{TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: pid(a.IntentID), VulnClass: a.VulnClass, Name: a.Name, Severity: a.Severity, Summary: a.Summary, Evidence: a.Evidence, Worker: t.worker, AssetIDs: pidList(a.AssetIDs), Entry: a.Entry, Method: a.Method, Parameter: a.Parameter}
 		var recorded *db.RecordedFinding
 		if t.findingRecorder != nil {
 			recorded, err = t.findingRecorder.Record(ctx, input, refs)
@@ -1270,7 +1313,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		if err != nil {
 			return actool.Errorf(err.Error()), nil
 		}
-		if t.notifyFinding != nil {
+		if t.notifyFinding != nil && !recorded.Merged {
 			iid := input.IntentID
 			if iid <= 0 {
 				iid = t.ownerNode
@@ -2041,7 +2084,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),
-		t.killWorkTool(), t.steerWorkTool(),
+		t.killWorkTool(), t.steerWorkTool(), t.cancelIntentTool(),
 		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。
 		t.addFinding(),
 		// list_companies：查看企业列表 + scope + 资产数（拿 company_id / 理解归属范围）。

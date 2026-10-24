@@ -106,6 +106,9 @@ const mockEvidenceBodies: Record<string, { req: string; resp: string }> = {
 // 运行期状态:finding id → 绑定列表(可增删改序,demo 内存态)。首次访问按种子初始化。
 const mockFindingTraffic: Record<string, FindingTrafficBinding[]> = {};
 const mockFindingTrafficVersion: Record<string, number> = {};
+let mockAutoAllow = { enabled: false, expires_at: 0, remaining_seconds: 0 };
+let mockRoEMode = "warn";
+
 let mockBindingSeq = 900;
 
 function mockBuildSnapshot(trafficId: string): TrafficEvidenceSnapshot {
@@ -1055,8 +1058,8 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   }
 
   // ── auth：让 demo 直接进主界面 ──
-  if (path === "/auth/status") return { initialized: true };
-  if (path === "/auth/login" || path === "/auth/init") return { token: "mock-demo" };
+  if (path === "/auth/status") return { initialized: true, authenticated: true };
+  if (path === "/auth/login" || path === "/auth/init") return { authenticated: true };
   if (path === "/auth/change-password") return { ok: true };
 
   // ── task cold archives ──
@@ -2218,8 +2221,23 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/traffic/hosts") return { hosts: D.trafficHosts };
   if (path === "/traffic") return D.traffic;
   if (path === "/traffic/exchange") return D.trafficDetail;
-  if (path === "/settings" && m === "GET") return D.settings;
-  if (path === "/settings" && m === "PUT") return { ...D.settings, ...b };
+  if (path === "/guard/auto-allow") {
+    if (m === "PUT") {
+      mockAutoAllow = {
+        enabled: Boolean(b.enabled),
+        expires_at: b.enabled ? Math.floor(Date.now() / 1000) + Number(b.hours) * 3600 : 0,
+        remaining_seconds: 0,
+      };
+    }
+    const remaining_seconds = Math.max(0, mockAutoAllow.expires_at - Math.floor(Date.now() / 1000));
+    return { ...mockAutoAllow, enabled: mockAutoAllow.enabled && remaining_seconds > 0, remaining_seconds };
+  }
+  if (path === "/settings" && m === "GET")
+    return { ...D.settings, roe_enforcement: mockRoEMode, gate_enabled: false, gate_path: "" };
+  if (path === "/settings" && m === "PUT") {
+    if (typeof b.roe_enforcement === "string") mockRoEMode = b.roe_enforcement;
+    return { ...D.settings, ...b, roe_enforcement: mockRoEMode, gate_enabled: false, gate_path: "" };
+  }
   if (path === "/settings/web-search/test") return { ok: true, count: 5, backend: D.settings.web_search_backend };
   if (path === "/settings/python/detect") return { python_interpreter: "/usr/bin/python3" };
   if (path === "/chat")

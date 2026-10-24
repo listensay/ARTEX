@@ -232,8 +232,12 @@ func shouldFailover(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		var timeout interface{ CallTimeout() bool }
+		return errors.As(err, &timeout) && timeout.CallTimeout()
 	}
 	switch code := statusOf(err); {
 	case code == 0:

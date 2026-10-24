@@ -1,3 +1,5 @@
+import type { StageEntry } from "./types";
+import type { IntranetTopology, ShellSession, SessionExecResult, SessionFsEntry, SessionReadResult, TunnelInfo, Credential, PendingScopeRow } from "./types";
 // Real backend client. /api/* is proxied to the Go backend (next.config rewrites).
 // Returns the domain types in lib/types.ts. Shapes match the backend handlers;
 // a few fields the backend serializes differently (e.g. created_at as a unix int)
@@ -6,6 +8,7 @@
 import type { ChatMention } from "@/lib/chat-mentions";
 import { MOCK } from "@/lib/mock/enabled";
 import { mockHandle } from "@/lib/mock/handler";
+import { sessionFetch } from "@/lib/session-http";
 import type {
   ActiveFindingRetest,
   Activity,
@@ -37,6 +40,7 @@ import type {
   ExplorationNodeQuery,
   Finding,
   FindingAssetTree,
+  FindingCheck,
   FindingDeepenResponse,
   FindingGroupsPage,
   FindingQuery,
@@ -106,26 +110,17 @@ import type {
   WorkspaceListing,
 } from "@/lib/types";
 
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("artex_token");
-}
-
 export async function http<T>(path: string, init?: RequestInit): Promise<T> {
   if (MOCK) return mockHandle<T>(init?.method ?? "GET", path, init?.body ?? null);
-  const token = getToken();
-  const r = await fetch(`/api${path}`, {
+  const r = await sessionFetch(`/api${path}`, {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers as Record<string, string> | undefined),
     },
   });
   if (r.status === 401) {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("artex_token");
-      document.cookie = "artex_token=; path=/; max-age=0";
       window.location.href = "/login";
     }
     throw new Error("未授权");
@@ -147,22 +142,8 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json();
 }
 
-// sseUrl builds a URL for Server-Sent Events streams.
-//
-// Production (static export / Docker): the Go backend serves the web UI *and* the
-// SSE streams on the same port, so we default to a same-origin (relative) URL.
-// This is what makes reverse-proxy deploys work: a page loaded from
-// https://<domain>/ connects to https://<domain>/api/..., which the proxy forwards
-// to the backend — no need to expose :8787 publicly. Hardcoding :8787 here used to
-// break exactly that (https://<domain>:8787/... is unreachable when only 443 is open).
-//
-// Dev (next dev): SSE must NOT go through the Next.js `/api` rewrite — that proxy
-// buffers the streamed response, so event frames never reach the browser (the
-// EventSource opens but receives 0 messages). So in dev only we connect straight
-// to the Go backend on :8787, whose CORS is open.
-//
-// Override either default with NEXT_PUBLIC_SSE_BASE (set it to "" to force same-origin).
-// Token is appended as ?token= because SSE can't carry cookies cross-origin.
+// SSE uses the HttpOnly session cookie; credentials never appear in the URL.
+// NEXT_PUBLIC_SSE_BASE may point to a separately allowed development origin.
 // mockReport returns a canned Markdown report for the demo.
 function mockReport(_task?: string): string {
   return `# ARTEX 渗透测试报告 — Acme Corp
@@ -192,9 +173,7 @@ export function sseUrl(path: string): string {
     (process.env.NODE_ENV !== "production" && typeof window !== "undefined"
       ? `${window.location.protocol}//${window.location.hostname}:8787`
       : "");
-  const token = getToken();
-  const sep = path.includes("?") ? "&" : "?";
-  return token ? `${base}${path}${sep}token=${encodeURIComponent(token)}` : `${base}${path}`;
+  return `${base}${path}`;
 }
 
 const get = <T>(p: string) => http<T>(p);
@@ -237,9 +216,10 @@ export const api = {
   health: () => get<{ ok: boolean; service: string; version: string }>("/health"),
 
   // ---- auth ----
-  authStatus: () => get<{ initialized: boolean }>("/auth/status"),
-  login: (username: string, password: string) => post<{ token: string }>("/auth/login", { username, password }),
-  initPassword: (password: string) => post<{ token: string }>("/auth/init", { password }),
+  authStatus: () => get<{ initialized: boolean; authenticated: boolean }>("/auth/status"),
+  login: (username: string, password: string) =>
+    post<{ authenticated: boolean }>("/auth/login", { username, password }),
+  initPassword: (password: string) => post<{ authenticated: boolean }>("/auth/init", { password }),
   changePassword: (oldPassword: string, newPassword: string) =>
     post<{ ok: boolean }>("/auth/change-password", { old_password: oldPassword, new_password: newPassword }),
 
@@ -442,10 +422,9 @@ export const api = {
     if (MOCK) return { uploaded: files.length };
     const fd = new FormData();
     for (const f of files) fd.append("file", f);
-    const token = getToken();
-    const r = await fetch(`/api/workspace/upload?path=${encodeURIComponent(dir)}`, {
+    const r = await sessionFetch(`/api/workspace/upload?path=${encodeURIComponent(dir)}`, {
       method: "POST",
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: {},
       body: fd,
     });
     if (!r.ok) throw new Error(`上传失败: ${r.status}`);
@@ -456,9 +435,8 @@ export const api = {
     if (MOCK) {
       blob = new Blob([`（demo）${path} 的下载内容示例。`], { type: "text/plain" });
     } else {
-      const token = getToken();
-      const r = await fetch(`/api/workspace/download?path=${encodeURIComponent(path)}`, {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      const r = await sessionFetch(`/api/workspace/download?path=${encodeURIComponent(path)}`, {
+        headers: {},
       });
       if (!r.ok) throw new Error(`下载失败: ${r.status}`);
       blob = await r.blob();
@@ -570,9 +548,8 @@ export const api = {
     } else if (opts.scope === "filtered" && opts.filters) {
       for (const [k, v] of findingFilterParams(opts.filters)) p.set(k, v);
     }
-    const token = getToken();
-    const r = await fetch(`/api/exploration/findings/export?${p.toString()}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    const r = await sessionFetch(`/api/exploration/findings/export?${p.toString()}`, {
+      headers: {},
     });
     if (!r.ok) throw new Error(`export: ${r.status}`);
     const blob = await r.blob();
@@ -643,10 +620,9 @@ export const api = {
     side: "request" | "response",
     contextTask?: string,
   ) => {
-    const token = getToken();
-    const response = await fetch(
+    const response = await sessionFetch(
       `/api/exploration/findings/${id}/traffic/${bindingId}/body?side=${side}&download=1${contextTask ? `&context_task=${encodeURIComponent(contextTask)}` : ""}`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      { headers: {} },
     );
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: "下载失败" }));
@@ -671,6 +647,14 @@ export const api = {
   ) => patch<Finding>(`/exploration/findings/${id}`, fields),
   // 删除漏洞:移除 findings 记录 + 来源探索节点(从发现列表/任务发现 Tab/探索图一并消失)。
   deleteFinding: (id: string) => del<{ deleted: boolean; id: number }>(`/exploration/findings/${id}`),
+  findingChecks: (id: string) =>
+    get<{ checks: FindingCheck[]; evidence_version: number }>(`/exploration/findings/${encodeURIComponent(id)}/checks`),
+  startFindingCheck: (id: string) =>
+    post<{ check: FindingCheck; created: boolean }>(`/exploration/findings/${encodeURIComponent(id)}/checks`, {
+      kind: "verify",
+    }),
+  findingVerifyMode: () => get<{ mode: "auto" | "off" }>("/finding-verify-mode"),
+  setFindingVerifyMode: (mode: "auto" | "off") => put<{ mode: "auto" | "off" }>("/finding-verify-mode", { mode }),
   findingRetests: (id: string) =>
     get<{ retests: FindingRetest[] }>(`/exploration/findings/${encodeURIComponent(id)}/retests`).then((r) =>
       arr(r.retests),
@@ -812,6 +796,9 @@ export const api = {
 
   // ---- app settings (runtime toggles) ----
   settings: () => get<Settings>(`/settings`),
+  guardAutoAllow: () => get<{ enabled: boolean; expires_at: number; remaining_seconds: number }>("/guard/auto-allow"),
+  setGuardAutoAllow: (enabled: boolean, hours: number) =>
+    put<{ enabled: boolean; expires_at: number; remaining_seconds: number }>("/guard/auto-allow", { enabled, hours }),
   setSettings: (patch: Partial<Settings>) => put<Settings>(`/settings`, patch),
   // Run a real "test" search with the given (or saved) config to verify it works.
   testWebSearch: (patch: {
@@ -825,8 +812,7 @@ export const api = {
   // 渠道是多实例资源（同一类型可配多个机器人、各有过滤规则），因此独立成组，
   // 不塞进扁平的 settings 键值里。
   notifyMeta: () => get<NotificationMeta>(`/notify/meta`),
-  notifyChannels: () =>
-    get<{ channels: NotificationChannel[] }>(`/notify/channels`).then((r) => arr(r.channels)),
+  notifyChannels: () => get<{ channels: NotificationChannel[] }>(`/notify/channels`).then((r) => arr(r.channels)),
   notifyCreateChannel: (payload: {
     name: string;
     kind: string;
@@ -865,9 +851,8 @@ export const api = {
   notifyRetryDelivery: (id: number) => post<{ ok: boolean }>(`/notify/deliveries/${id}/retry`),
   report: async (task?: string) => {
     if (MOCK) return mockReport(task);
-    const token = getToken();
-    const r = await fetch(`/api/report${tq(task)}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    const r = await sessionFetch(`/api/report${tq(task)}`, {
+      headers: {},
     });
     if (!r.ok) throw new Error(`report: ${r.status}`);
     return r.text();
@@ -893,10 +878,9 @@ export const api = {
       };
     const fd = new FormData();
     for (const f of files) fd.append("file", f);
-    const token = getToken();
-    const r = await fetch(`/api/chat/upload?scope=${scope}&id=${encodeURIComponent(id)}`, {
+    const r = await sessionFetch(`/api/chat/upload?scope=${scope}&id=${encodeURIComponent(id)}`, {
       method: "POST",
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: {},
       body: fd,
     });
     if (!r.ok) throw new Error(`上传失败: ${r.status} ${await r.text()}`);
@@ -1153,11 +1137,10 @@ export const api = {
     if (MOCK) return { name: file.name.replace(/\.zip$/i, ""), files: 1 };
     const fd = new FormData();
     fd.append("file", file);
-    const token = getToken();
-    const r = await fetch(`/api/skills/upload${overwrite ? "?overwrite=true" : ""}`, {
+    const r = await sessionFetch(`/api/skills/upload${overwrite ? "?overwrite=true" : ""}`, {
       method: "POST",
       body: fd,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     });
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body?.error || `上传失败(${r.status})`);
@@ -1242,21 +1225,18 @@ export const api = {
   // ---- intercept tool-config (全局工具拦截范围) ----
   interceptGetToolConfig: async (): Promise<{ enabled_tools: string[] }> => {
     if (MOCK) return { enabled_tools: ["bash"] };
-    const token = getToken();
-    const r = await fetch("/api/intercept/tool-config", {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    const r = await sessionFetch("/api/intercept/tool-config", {
+      headers: {},
     });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   interceptSetToolConfig: async (enabledTools: string[]): Promise<void> => {
     if (MOCK) return;
-    const token = getToken();
-    const r = await fetch("/api/intercept/tool-config", {
+    const r = await sessionFetch("/api/intercept/tool-config", {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ enabled_tools: enabledTools }),
     });
@@ -1313,4 +1293,54 @@ export const api = {
   // 202 即返回，实际下载在后台跑，进度走 /api/update/stream。
   applyUpdate: () => post<{ ok: boolean; target: string }>(`/update/apply`),
   rollbackUpdate: () => post<{ ok: boolean }>(`/update/rollback`),
+  intranetTopology: (taskId?: string) =>
+    get<IntranetTopology>(`/intranet/topology${taskQuery(taskId)}`).then((r) => ({
+      nodes: arr(r.nodes),
+      edges: arr(r.edges),
+      segments: arr(r.segments),
+    })),
+  shellSessions: (taskId?: string) =>
+    get<{ items: ShellSession[] }>(`/sessions${taskQuery(taskId)}`).then((r) => arr(r.items)),
+  // timeout 单位为秒，省略则由后端用默认值。
+  sessionExec: (id: string, command: string, timeout?: number) =>
+    post<SessionExecResult>(`/sessions/${encodeURIComponent(id)}/exec`, {
+      command,
+      ...(timeout ? { timeout } : {}),
+    }),
+  sessionList: (id: string, path: string) =>
+    post<{ entries: SessionFsEntry[] }>(`/sessions/${encodeURIComponent(id)}/list`, { path }).then((r) =>
+      arr(r.entries),
+    ),
+  sessionRead: (id: string, path: string) =>
+    post<SessionReadResult>(`/sessions/${encodeURIComponent(id)}/read`, { path }),
+  sessionWrite: (id: string, path: string, contentBase64: string) =>
+    post<{ ok: boolean; bytes: number }>(`/sessions/${encodeURIComponent(id)}/write`, {
+      path,
+      content_base64: contentBase64,
+    }),
+  // 人工探活:成功 alive=true;失败 alive=false 且 error 带原因(后端已诚实标 dead)。
+  probeSession: (id: string) =>
+    post<{ alive: boolean; ms?: number; error?: string }>(`/sessions/${encodeURIComponent(id)}/probe`),
+  // 移交内网:以该会话的立足点主机为初始 scope 创建新内网任务,返回新任务 id(字符串)。
+  // 400 = 无法确定立足点 IP;404 = 会话不存在。
+  handoffSession: (id: string) => post<{ task_id: string }>(`/sessions/${encodeURIComponent(id)}/handoff`),
+  deleteSession: (id: string) => del<{ ok: boolean }>(`/sessions/${encodeURIComponent(id)}`),
+  tunnels: (taskId?: string) =>
+    get<{ items: TunnelInfo[] }>(`/tunnels${taskQuery(taskId)}`).then((r) => arr(r.items)),
+  teardownTunnel: (id: string) => post<{ ok: boolean }>(`/tunnels/${encodeURIComponent(id)}/teardown`),
+  credentials: (taskId?: string) =>
+    get<{ items: Credential[] }>(`/credentials${taskQuery(taskId)}`).then((r) => arr(r.items)),
+ pendingScopes: (taskId:string) => get<{items: PendingScopeRow[]}>(`/tasks/${encodeURIComponent(taskId)}/pending-scope?all=1`).then(r => arr(r.items)),
+ decidePendingScope: (id:number,action:"approve"|"dismiss") => post<PendingScopeRow>(`/pending-scope/${id}/decide`,{action}),
+ registerSession: (body:Record<string,unknown>)=>post<Record<string,unknown>>("/sessions",body),
+ reconSession: (id:string)=>post<Record<string,unknown>>(`/sessions/${encodeURIComponent(id)}/recon`),
+ deployTunnel: (body:Record<string,unknown>)=>post<Record<string,unknown>>("/tunnels",body),
+ addCredential: (body:Record<string,unknown>)=>post<Record<string,unknown>>("/credentials",body),
+ verifyCredential: (id:string,verified:boolean,reason:string)=>patch<Record<string,unknown>>(`/credentials/${encodeURIComponent(id)}`,{verified,reason}),
+ stageEntries:()=>get<StageEntry[]>("/stage"),
+ createStage:(body:Record<string,unknown>)=>post<StageEntry>("/stage",body),
+ deleteStage:(token:string)=>del<Record<string,unknown>>(`/stage/${encodeURIComponent(token)}`),
+
 };
+
+function taskQuery(taskId?:string){return taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";}

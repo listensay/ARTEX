@@ -1,0 +1,33 @@
+# Linux template. Create the artex user and writable /opt/artex installation
+# (including data/) plus /etc/artex/secrets (artex:artex, mode 0700) first.
+# Set ARTEX_PG_DSN in /etc/artex.env (root:artex, mode 0640).
+# Run doctor with the SAME environment and user before enabling this service.
+# Directly supervise artex: do not wrap it with start.sh.
+[Unit]
+Description=ARTEX agentic pentest platform
+Documentation=https://github.com/Autumn-27/ARTEX
+Wants=network-online.target
+After=network-online.target postgresql.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=artex
+Group=artex
+WorkingDirectory=/opt/artex
+EnvironmentFile=-/etc/artex.env
+Environment=ARTEX_SECRET_DIR=/etc/artex/secrets
+UMask=0077
+ExecStart=/opt/artex/artex -addr 127.0.0.1:8787 -proxy 127.0.0.1:8788 -data /opt/artex/data
+# Exit 75 requests restart after self-update/rollback. Normal exit 0 stops.
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=artex
+
+[Install]
+WantedBy=multi-user.target

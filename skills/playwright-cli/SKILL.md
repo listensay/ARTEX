@@ -6,6 +6,16 @@ allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
 
 # Browser Automation with playwright-cli
 
+## ARTEX Docker
+
+容器中使用预装 Chromium 与固定配置打开浏览器：
+
+```bash
+playwright-cli open --config=/app/packaging/playwright-cli.config.json
+```
+
+该配置为无头运行，无须下载 Chrome 或连接宿主浏览器。其余命令沿用同一会话，结束后 `playwright-cli close`。如使用 browser MCP，无须再启动 CLI；目标范围、审批与原任务约束照常生效。
+
 ## Quick start
 
 ```bash

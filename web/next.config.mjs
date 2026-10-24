@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
-// 静态导出：`NEXT_EXPORT=1 next build` 产出纯静态目录到 web/out，可直接丢进
-// nginx web 根目录运行。开发(next dev)不设该变量，保留 /api 反代与热更新。
+// 静态导出供 Go 内嵌服务使用；所有页面与资源均经过 Go 门控。
+// 开发服务只绑定回环，不能作为公网生产入口。
 const isExport = process.env.NEXT_EXPORT === "1";
 // Vercel demo：整站走 mock，无后端，无需 /api 反代。
 const isMock = process.env.NEXT_PUBLIC_MOCK === "1";
@@ -11,10 +11,8 @@ const nextConfig = {
   // 避免父目录的 lockfile 影响根目录推断及资源路径生成。
   turbopack: { root: fileURLToPath(new URL(".", import.meta.url)) },
   reactCompiler: true,
-  // 允许从局域网 IP 访问 dev 资源（HMR），按需增删。
-  // dev 阶段放开任意 IPv4 来源访问 /_next/* 与 HMR（局域网 IP 变动也不受影响）。
-  // 注意：Next 出于安全禁止裸 "*"，需用分段通配；"*.*.*.*" 匹配任意 IPv4。
-  allowedDevOrigins: ["*.*.*.*"],
+  // HMR 仅允许本机来源。
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   compiler: {
     removeConsole: process.env.NODE_ENV === "production",
   },

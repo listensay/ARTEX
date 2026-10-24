@@ -1,0 +1,339 @@
+{
+  "description": "2026-10-24 本机 Linux/arm64 的角色配置记录；不含密钥、不修改 Agent 模型、提示词或审批规则。",
+  "skills": {
+    "goals": [],
+    "planner": [
+      "chains-meta",
+      "chains-recon",
+      "artex-toolkit"
+    ],
+    "mainagent": [
+      "chains-meta",
+      "chains-recon",
+      "artex-toolkit"
+    ],
+    "worker": [
+      "chains-ad",
+      "chains-app",
+      "chains-meta",
+      "chains-pivot",
+      "chains-priv",
+      "chains-pwn",
+      "chains-recon",
+      "chains-rev",
+      "chains-web",
+      "api-recon",
+      "playwright-cli",
+      "artex-toolkit"
+    ],
+    "pentest": [
+      "chains-ad",
+      "chains-app",
+      "chains-meta",
+      "chains-pivot",
+      "chains-priv",
+      "chains-pwn",
+      "chains-recon",
+      "chains-rev",
+      "chains-web",
+      "api-recon",
+      "playwright-cli",
+      "artex-toolkit"
+    ],
+    "auto": [
+      "chains-meta",
+      "artex-toolkit",
+      "playwright-cli",
+      "scopesentry"
+    ],
+    "reporter": [
+      "chains-meta",
+      "chains-recon",
+      "chains-web"
+    ],
+    "retester": [
+      "chains-meta",
+      "chains-recon",
+      "chains-web",
+      "playwright-cli",
+      "artex-toolkit"
+    ],
+    "verifier": [
+      "chains-meta",
+      "chains-recon",
+      "chains-web",
+      "playwright-cli",
+      "artex-toolkit"
+    ]
+  },
+  "mcp": {
+    "browser": {
+      "agents": [
+        "mainagent",
+        "worker",
+        "pentest",
+        "auto",
+        "retester",
+        "verifier"
+      ],
+      "transport": "stdio",
+      "command": "/usr/bin/playwright-mcp",
+      "args": [
+        "--headless",
+        "--no-sandbox",
+        "--isolated",
+        "--executable-path",
+        "/usr/local/bin/artex-chromium"
+      ]
+    },
+    "ScopeSentry": {
+      "enabled": false,
+      "agents": [],
+      "reason": "本机没有外部实例 URL，保留已有密钥供将来配置"
+    }
+  },
+  "checklist_add_agents": [
+    "verifier",
+    "retester"
+  ],
+  "shell_hints": [
+    {
+      "key": "toolkit_suo5",
+      "kind": "shell",
+      "description": "suo5 2.2.0：suo5 --help；部署使用 tunnel_deploy。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_suo5_payloads",
+      "kind": "shell",
+      "description": "suo5-payloads 2.2.0：/app/data/tools/suo5-payloads 目录，仅受管流程使用。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_chisel",
+      "kind": "shell",
+      "description": "chisel 1.12.0：chisel --help；部署使用 tunnel_deploy。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_gogo",
+      "kind": "shell",
+      "description": "gogo 2.15.0：gogo --help。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_naabu",
+      "kind": "shell",
+      "description": "naabu 2.6.1：naabu -h。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_httpx",
+      "kind": "shell",
+      "description": "httpx 1.12.0：httpx -h。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_katana",
+      "kind": "shell",
+      "description": "katana 1.8.0：katana -h。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_fscan",
+      "kind": "shell",
+      "description": "fscan 2.2.2：fscan -help；-h 是目标参数。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_impacket",
+      "kind": "shell",
+      "description": "impacket 0.13.1：smbclient.py -h / secretsdump.py -h / mssqlclient.py -h / getTGT.py -h；没有 impacket-* 启动器。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_mimikatz",
+      "kind": "shell",
+      "description": "mimikatz 2.2.0-20220919：/app/data/tools/mimikatz.exe；Windows 目标文件，不能在 Linux 执行。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_pypykatz",
+      "kind": "shell",
+      "description": "pypykatz 0.6.13：pypykatz --help。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_lazagne",
+      "kind": "shell",
+      "description": "laZagne 2.4.7：/app/data/tools/laZagne.exe；Windows 目标文件，不能在 Linux 执行。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_ligolo_agent",
+      "kind": "shell",
+      "description": "ligolo-agent 0.9.2：ligolo-agent -h；当前没有 ARTEX 受管适配。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_ligolo_proxy",
+      "kind": "shell",
+      "description": "ligolo-proxy 0.9.2：ligolo-proxy -h；当前没有 ARTEX 受管适配。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_peass",
+      "kind": "shell",
+      "description": "peass 20261021-2fe956c4：/app/data/tools/peass 目录；按目标平台选文件。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_nxc",
+      "kind": "shell",
+      "description": "nxc 1.5.1：nxc --help。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    },
+    {
+      "key": "toolkit_penelope",
+      "kind": "shell",
+      "description": "penelope 0.21.0：交互 TTY 中 penelope --help；不得自动启动监听。实际操作遵守本角色、当前任务范围和审批。",
+      "schema": {},
+      "exec": {},
+      "agents": [
+        "worker",
+        "pentest",
+        "auto"
+      ],
+      "enabled": true,
+      "deferred": false
+    }
+  ]
+}

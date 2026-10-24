@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/agent"
+	"github.com/Autumn-27/artex/agent/chainskel"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/norma/harness"
@@ -112,6 +113,7 @@ type Engine struct {
 	// task operation. Once BeginDelete returns, every admitted writer is reflected
 	// in inflight and every later writer is rejected.
 	deleteMu sync.RWMutex
+	closed   atomic.Bool
 
 	// Every long-lived task goroutine (planner, workers and deadline coordinator)
 	// runs under one task-scoped context. Successful deletion cancels that context,
@@ -220,8 +222,34 @@ func (e *Engine) AbortDelete(taskID string, keepPaused bool) {
 }
 
 func (e *Engine) IsDeleting(taskID string) bool {
+	if e.closed.Load() {
+		return true
+	}
 	_, ok := e.deleting.Load(taskID)
 	return ok
+}
+
+// Close prevents new task operations and waits for every registered task loop.
+// It cancels execution without deleting tasks or changing their persisted state.
+func (e *Engine) Close() {
+	e.deleteMu.Lock()
+	e.closed.Store(true)
+	e.runtimeMu.Lock()
+	runtimes := make([]*taskRuntime, 0, len(e.runtimes))
+	for _, rt := range e.runtimes {
+		rt.cancel()
+		runtimes = append(runtimes, rt)
+	}
+	e.runtimeMu.Unlock()
+	e.deleteMu.Unlock()
+	e.execMu.Lock()
+	for _, cancel := range e.execCancel {
+		cancel(context.Canceled)
+	}
+	e.execMu.Unlock()
+	for _, rt := range runtimes {
+		rt.wg.Wait()
+	}
 }
 
 // registerTaskRoutines reserves count goroutines in the task runtime. Callers
@@ -534,8 +562,10 @@ func (e *Engine) drainSteer(intentID int64) (string, bool) {
 // of running the tool. No queued message → the guard behaves exactly as before.
 // 它同时负责「空转回合」的续跑，见 Stop。
 type steerHooks struct {
-	inner harness.HookRunner
-	drain func() (string, bool)
+	det     *agent.StuckDetector
+	onStuck func(*agent.StuckEvent)
+	inner   harness.HookRunner
+	drain   func() (string, bool)
 	// nudges 是本条意图已注入的空转续跑次数，上限 limit。指针:harness 持有的是
 	// steerHooks 的值拷贝，计数必须共享同一份。
 	nudges *atomic.Int64
@@ -581,9 +611,16 @@ func isThinkingOnlyTurn(messages []llm.Message) bool {
 }
 
 func (h steerHooks) PreToolUse(ctx context.Context, name string, input []byte) (bool, string, []byte) {
-	if msg, ok := h.drain(); ok {
-		return true, "【规划者实时纠偏】" + msg +
-			"\n（这是规划者对本意图的即时指令；本次工具调用未执行，请据此调整下一步。若与你当前打算冲突，以此为准。）", nil
+	if h.det != nil {
+		if msg, ok := h.det.Drain(); ok {
+			return true, msg, nil
+		}
+	}
+	if h.drain != nil {
+		if msg, ok := h.drain(); ok {
+			return true, "【规划者实时纠偏】" + msg +
+				"\n（这是规划者对本意图的即时指令；本次工具调用未执行，请据此调整下一步。若与你当前打算冲突，以此为准。）", nil
+		}
 	}
 	if h.inner != nil {
 		return h.inner.PreToolUse(ctx, name, input)
@@ -592,6 +629,11 @@ func (h steerHooks) PreToolUse(ctx context.Context, name string, input []byte) (
 }
 
 func (h steerHooks) PostToolUse(ctx context.Context, name string, input, result []byte, isErr bool) {
+	if h.det != nil {
+		if ev := h.det.Observe(name, string(result), isErr); ev != nil && h.onStuck != nil {
+			h.onStuck(ev)
+		}
+	}
 	if h.inner != nil {
 		h.inner.PostToolUse(ctx, name, input, result, isErr)
 	}
@@ -627,13 +669,21 @@ func (h steerHooks) Stop(ctx context.Context, messages []llm.Message) (bool, []s
 // KillWork cancels the in-flight work running intentID (planner's kill_work tool).
 // The work's agent-core session honors ctx cancellation and aborts promptly.
 func (e *Engine) KillWork(intentID int64) error {
+	return e.killWorkWithCause(intentID, agent.AbortKilledByPlanner)
+}
+
+func (e *Engine) KillWorkByMainAgent(intentID int64) error {
+	return e.killWorkWithCause(intentID, agent.AbortKilledByMainAgent)
+}
+
+func (e *Engine) killWorkWithCause(intentID int64, reason error) error {
 	e.workMu.Lock()
 	run := e.work[intentID]
 	e.workMu.Unlock()
 	if run == nil {
 		return fmt.Errorf("意图 %d 当前没有运行中的 work（可能已结束或未被领取）", intentID)
 	}
-	run.cancel(agent.AbortKilledByPlanner)
+	run.cancel(reason)
 	return nil
 }
 
@@ -762,10 +812,11 @@ func (e *Engine) Run(ctx context.Context, t *Task) {
 		t.Notify() // already running — just nudge a planning round
 		return
 	}
-	rt := e.registerTaskRoutines(ctx, t.ID, 1+workers)
+	rt := e.registerTaskRoutines(ctx, t.ID, 2+workers)
 	e.deleteMu.RUnlock()
 	e.touch(t.ID)
 	runTaskRoutine(rt, func(loopCtx context.Context) { e.plannerLoop(loopCtx, t) })
+	runTaskRoutine(rt, func(loopCtx context.Context) { e.intentWatchdog(loopCtx, t) })
 	for i := 0; i < workers; i++ {
 		name := fmt.Sprintf("work#%d", i+1)
 		runTaskRoutine(rt, func(loopCtx context.Context) { e.workerLoop(loopCtx, t, name) })
@@ -1011,7 +1062,14 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	workCtx = intercept.WithTaskContext(workCtx, t.ID, label, taskEmit)
 	// nudges 有意建在 model_error 重跑循环之外:空转续跑的上限是「这条意图」的总量，
 	// 重跑一轮不该把额度清零重来。
+	det := agent.NewStuckDetector(agent.DefaultStuckConfig())
+	det.PivotHint = chainskel.PivotHintsForIntent(intent.Payload, 3)
 	hooks := steerHooks{
+		det: det,
+		onStuck: func(ev *agent.StuckEvent) {
+			_, _ = t.Store.AddNode(db.KindHint, map[string]any{"text": agent.StuckIntervention(*ev) + "\n" + det.PivotHint, "kind": "stagnation", "intent_id": iid}, 8, "active", "engine", nil)
+			t.Notify()
+		},
 		inner:  t.Guard.Hooks(),
 		drain:  func() (string, bool) { return e.drainSteer(iid) },
 		nudges: &atomic.Int64{},

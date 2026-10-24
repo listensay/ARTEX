@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -51,12 +52,32 @@ func main() {
 }
 
 func run() int {
+	// Deployment diagnostics must bypass self-update, migrations and listeners.
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		return runDoctor(os.Args[2:])
+	}
 	var (
-		addr    = flag.String("addr", ":8787", "HTTP listen address")
-		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
-		proxy   = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
+		addr        = flag.String("addr", "127.0.0.1:8787", "HTTP listen address (loopback by default)")
+		dataDir     = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
+		proxy       = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
+		healthcheck = flag.Bool("healthcheck", false, "check local backend health and exit")
 	)
 	flag.Parse()
+	if *healthcheck {
+		host, port, err := net.SplitHostPort(*addr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "127.0.0.1"
+		}
+		if err := server.CheckHealth("http://"+net.JoinHostPort(host, port), *dataDir, config.SecretDir()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
 
 	// hand the build version to the server package so GET /api/health can report it
 	// to the frontend top bar.
@@ -112,16 +133,27 @@ func run() int {
 		skillDir = abs
 	}
 	log.Printf("[config] skill 目录: %s", skillDir)
-	srv := server.New(ctx, mgr, skillDir, *dataDir, config.BaseDir())
+	srv := server.New(ctx, mgr, skillDir, *dataDir, config.SecretDir())
+	gate, err := server.NewGate(*addr, *dataDir, config.SecretDir())
+	if err != nil {
+		log.Fatalf("configure gate: %v", err)
+	}
+	srv.SetGate(gate)
 	httpSrv := &http.Server{
 		Addr:              *addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	listener, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+	srv.SetStageBaseURL(listener.Addr().String())
+	mgr.StartPortAudit(listener.Addr())
 	go func() {
 		log.Printf("ARTEX %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve: %v", err)
 		}
 	}()

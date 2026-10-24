@@ -146,6 +146,11 @@ func (d *DB) DecideInterceptPending(id int64, status string) error {
 // rule matches for observability — they don't block and need no user action, so unlike
 // CreateInterceptPending (which starts 'pending') this records the outcome directly.
 func (d *DB) CreateDecidedIntercept(ruleID, convID int64, taskID, agentName, toolName string, input []byte, status, reason string, audits ...*InterceptAudit) (int64, error) {
+	return d.CreateDecidedInterceptWithSource(ruleID, convID, taskID, agentName, toolName, input, status, reason, interceptSource(ruleID, reason), audits...)
+}
+
+// CreateDecidedInterceptWithSource preserves the origin of automatic approvals.
+func (d *DB) CreateDecidedInterceptWithSource(ruleID, convID int64, taskID, agentName, toolName string, input []byte, status, reason, source string, audits ...*InterceptAudit) (int64, error) {
 	raw := json.RawMessage(input)
 	if len(raw) == 0 {
 		raw = json.RawMessage("{}")
@@ -167,7 +172,7 @@ func (d *DB) CreateDecidedIntercept(ruleID, convID int64, taskID, agentName, too
 	err := d.QueryRow(`
 INSERT INTO intercept_pending(rule_id, conversation_id, task_id, agent_name, tool_name, tool_input, status, reason, decided_at, decision_source, audit)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10) RETURNING id`,
-		ruleIDPtr, convIDPtr, taskIDPtr, agentName, toolName, raw, status, reason, interceptSource(ruleID, reason), firstAudit(audits)).Scan(&id)
+		ruleIDPtr, convIDPtr, taskIDPtr, agentName, toolName, raw, status, reason, source, firstAudit(audits)).Scan(&id)
 	return id, err
 }
 
