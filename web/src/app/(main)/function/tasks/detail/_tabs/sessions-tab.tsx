@@ -51,6 +51,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSideQuestions } from "@/hooks/use-side-questions";
 import { api, sseUrl } from "@/lib/api";
+import { mergeActivities as mergeBySeq } from "@/lib/activity-merge";
 import { shouldSubmitOnKey, useChatSendMode } from "@/lib/chat-send-mode";
 import { MOCK } from "@/lib/mock/enabled";
 import { isBtwCommand } from "@/lib/side-questions";
@@ -100,6 +101,7 @@ const SYSTEM_SCAN_PAGE = 500; // generic activity pages scanned to recover spars
 const MAX_KEEP = 4000; // per-session in-memory cap; older pages re-fetched on scroll-up
 const STREAM_WINDOW_MS = 5000; // "live" = activity seen within this window
 const MAX_WORKER_MESSAGE_CHARS = 4000;
+const EMPTY_ACTIVITY: Activity[] = [];
 
 function newWorkerMessageRequestID(): string {
   return (
@@ -154,14 +156,6 @@ function sessionKeyOf(a: Activity): string {
 // mergeBySeq unions two activity lists by seq (dedup) in ascending seq order. Every
 // data source — latest page, older page, SSE compensation, live tail — goes through
 // this, so history responses can never clobber live records received meanwhile.
-function mergeBySeq(current: Activity[], incoming: Activity[]): Activity[] {
-  if (!incoming.length) return current;
-  const bySeq = new Map<number, Activity>();
-  for (const a of current) bySeq.set(a.seq, a);
-  for (const a of incoming) bySeq.set(a.seq, a);
-  return [...bySeq.values()].sort((p, q) => p.seq - q.seq);
-}
-
 // statusIcon maps a session status to its icon. Worker terminal states are
 // distinct & color-coded: 完成(绿勾圈) / 取消停止(琥珀斜杠圈) / 出错(红叉圈) /
 // 步数耗尽(紫). running=蓝色转圈, pending(待领取)=灰时钟.
@@ -640,12 +634,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const [llmResolutions, setLLMResolutions] = React.useState<TaskLLMResolutions | null>(null);
   // Pending intercept requests for this task — used to show warning icons on sessions.
   const [pendingIntercepts, setPendingIntercepts] = React.useState<InterceptApprovalRow[]>([]);
+  const fetchActivityDetail = React.useCallback((seq: number) => api.activityDetail(seq, taskId).then((r) => r.detail ?? ""), [taskId]);
 
   // Refs backing SSE/loading without re-render churn.
   const snapshotRef = React.useRef(0); // task-level snapshot cursor → SSE since=
   const esRef = React.useRef<EventSource | null>(null);
   const activeKeyRef = React.useRef(mainSessionKey(0)); // current session key (for SSE dispatch/unread)
   const atBottomRef = React.useRef(true); // transcript pinned to bottom?
+  const loadingOlderKeysRef = React.useRef(new Set<string>());
   const llmToastSeqRef = React.useRef<Set<number>>(new Set());
   const chatStatusRequestRef = React.useRef(0);
   const firstIntentsRef = React.useRef<TaskNode[]>([]);
@@ -749,7 +745,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const loadEarlier = React.useCallback(
     (key: string, viewport: () => HTMLElement | null) => {
       const st = store[key];
-      if (!st || st.loadingMore || !st.hasMore || !st.earliestSeq) return;
+      const loading = loadingOlderKeysRef.current;
+      if (!st || st.loadingMore || loading.has(key) || !st.hasMore || !st.earliestSeq) return;
+      loading.add(key); // scroll events can repeat before React commits loadingMore
+      const requestScope = reqTokenRef.current;
       const vp = viewport();
       const prevH = vp?.scrollHeight ?? 0;
       const prevTop = vp?.scrollTop ?? 0;
@@ -757,6 +756,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
       api
         .activityHistory(taskId, key, st.earliestSeq, PAGE)
         .then((r) => {
+          if (reqTokenRef.current !== requestScope) return;
           patchStore(key, (s) => {
             const items = mergeBySeq(r.items, s.items);
             return {
@@ -769,12 +769,15 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           });
           requestAnimationFrame(() => {
             const v = viewport();
-            if (v) v.scrollTop = prevTop + (v.scrollHeight - prevH);
+            if (v && v === vp && activeKeyRef.current === key) {
+              v.scrollTop = prevTop + (v.scrollHeight - prevH);
+            }
           });
         })
         .catch(() => {
-          patchStore(key, (s) => ({ ...s, loadingMore: false }));
-        });
+          if (reqTokenRef.current === requestScope) patchStore(key, (s) => ({ ...s, loadingMore: false }));
+        })
+        .finally(() => loading.delete(key));
     },
     [taskId, store, patchStore],
   );
@@ -893,6 +896,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     snapshotRef.current = 0;
     llmToastSeqRef.current = new Set();
     reqTokenRef.current = {};
+    loadingOlderKeysRef.current = new Set();
     // Reserve the initial main key so the active-session effect (which fires for main on
     // mount) won't double-load it and pre-empt the SSE opened here.
     loadingKeysRef.current = new Set([mainSessionKey(0)]);
@@ -980,6 +984,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           let a: Activity;
           try {
             a = JSON.parse(e.data) as Activity;
+            // Keep the live cache summary-only even against an older backend.
+            // Detail bodies are loaded by the transcript when viewed/expanded.
+            delete a.detail;
           } catch {
             return; // ignore malformed frame
           }
@@ -1276,7 +1283,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   // main segment is mid-turn the active composer is disabled. Clear it the moment the
   // active session's terminal record (kind='result', or an error) lands, so the input
   // re-enables immediately instead of waiting for the next chat-status poll.
-  const activeItems = activeState?.items ?? [];
+  const activeItems = activeState?.items ?? EMPTY_ACTIVITY;
   const activeLast = activeItems[activeItems.length - 1];
   const activeSettled =
     !!activeLast && (activeLast.kind === "result" || (activeLast.kind === "text" && activeLast.is_error));
@@ -1332,7 +1339,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   // the main agent's own replies/steps). Planner session shows planner steps; a
   // worker session shows only its intent's activity, led by the intent objective.
   const activity = React.useMemo(() => {
-    const items = activeState?.items ?? [];
+    const items = activeItems;
     // The main-agent console renders purely from server data: the human turn is
     // persisted+broadcast by the backend BEFORE it returns, so it arrives over the
     // same SSE stream (worker="mainagent") as every agent step — no client-side
@@ -1341,13 +1348,14 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     if (isPlanner || isSystem) return items;
     // Worker session: the intent leads the transcript as a right-aligned "user"-style
     // message (the task handed to this worker), followed by its execution steps.
-    const intentTitle = sessionMeta.get(active.id)?.title ?? active.title;
+    const intentTitle = activeDisplayTitle;
     const intentMsg: Activity = {
       seq: -1, // sorts/leads before any real step (real seq ≥ 0)
       worker: items[0]?.worker ?? active.id, // reuse the lane so no worker chips appear
       ts: active.last_activity || "",
       kind: "intent", // LLM-generated objective — rendered as a distinct (non-human) bubble
       summary: intentTitle,
+      detail: intentTitle, // synthetic objective has no persisted detail endpoint
       source_task_id: active.source_task_id,
       inherited: active.inherited,
     };
@@ -1356,13 +1364,12 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     isMain,
     isPlanner,
     isSystem,
-    activeState,
+    activeItems,
     active.id,
-    active.title,
+    activeDisplayTitle,
     active.last_activity,
     active.source_task_id,
     active.inherited,
-    sessionMeta,
   ]);
 
   // seq of this session's most-recent TodoWrite call — for the Todo popover.
@@ -1896,6 +1903,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                   </div>
                 ) : activity.length ? (
                   <Transcript
+                    key={`${taskId}:${activeKey}`}
                     activity={activity}
                     live={active.live}
                     taskId={taskId}
@@ -2097,7 +2105,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               <div className="flex items-center border-t px-4 py-2">
                 <TodoPopover
                   seq={latestTodoSeq}
-                  fetchDetail={(seq) => api.activityDetail(seq, taskId).then((r) => r.detail ?? "")}
+                  fetchDetail={fetchActivityDetail}
                 />
               </div>
             )}

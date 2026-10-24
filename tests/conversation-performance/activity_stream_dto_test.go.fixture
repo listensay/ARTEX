@@ -1,0 +1,31 @@
+package server
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/Autumn-27/artex/db"
+)
+
+func TestActivityStreamPayloadDoesNotGrowWithToolOutput(t *testing.T) {
+	for _, kind := range []string{"tool_result", "thinking", "user", "result"} {
+		t.Run(kind, func(t *testing.T) {
+			a := db.Activity{ID: 42, Worker: "work#1", Kind: kind, ToolUseID: "call-42", Summary: "summary", Detail: strings.Repeat("large output\n", 100000)}
+			d := activityStreamDTO(a)
+			body, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(body) > 1024 || strings.Contains(string(body), `"detail"`) {
+				t.Fatalf("stream retained full body: %d bytes", len(body))
+			}
+			if d.Seq != a.ID || d.ToolUseID != a.ToolUseID || d.Summary != a.Summary || d.Kind != kind {
+				t.Fatal("stream lost activity identity or summary")
+			}
+			if a.Detail == "" {
+				t.Fatal("stream conversion removed persisted detail")
+			}
+		})
+	}
+}

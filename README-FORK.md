@@ -12,6 +12,14 @@
 
 日常使用、角色配置表、可选回连设置、备份和持久化规则见 [本机 skill 与工具配置说明](docs/agent-tooling.md)；重启、工具装配、竞态回归及部署检查结果见 [工具配置验证报告](docs/testing/agent-tooling-report.md)。下文各迁移报告中的镜像、二进制摘要和测试结果保留为对应批次的历史记录；ScopeSentry 当前状态见下方部署与验证报告。
 
+## 对话与任务会话卡顿修复（2026-10-24）
+
+任务状态刷新和实时消息重放保留未变化的消息对象；消息分组、正文和 Markdown 复用已有渲染。工具／推理详情按需加载，同一会话的重叠请求共用一个请求，缓存最多保留 128 条、合计 200 万字符，切换会话后释放。连续滚动事件只请求一次同页历史，旧任务请求不会更新新任务或改变新会话的滚动位置。
+
+任务 SSE 与分页历史统一只发送摘要及身份、Token、审批等元数据，完整正文仍通过原详情接口读取；前端兼容旧后端的大正文事件。Worker 的合成意图直接显示完整文本。无需新增配置或数据库迁移。
+
+本机 Docker 已切换新版。Chrome 的「React DevTools 1.0.0」（ID `bfndgimipcdaiadjgkaailoahpbinebi`）会在打开对话时扫描并序列化组件，导致长时间阻塞；本机已按用户授权停用，重新启用可能再次卡顿。
+
 ## ScopeSentry 随 Docker 一键启动（2026-10-24）
 
 `docker compose up -d artex` 会自动带起 ScopeSentry 管理平台、扫描节点、MongoDB 和 Redis。首次生成数据库密码与专用 API Key，保存在 `.secrets/scopesentry/`；自动接入地址为空的 ScopeSentry 数据源，绑定 Auto 并发现工具。已有外部地址、后续人工关闭／解绑／密钥修改保留。

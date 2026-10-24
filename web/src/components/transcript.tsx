@@ -16,12 +16,13 @@ import {
   XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
 import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ApprovalDetail } from "@/components/approval-records";
+import { api } from "@/lib/api";
+import { createActivityDetailCache } from "@/lib/activity-detail-cache";
 import type { Activity, InterceptPending } from "@/lib/types";
 
 // ---- per-agent lane color (planner + work#1/#2/#3 …) ---------------------------
@@ -600,7 +601,7 @@ function UserRow({ step, intent, getDetail }: { step: Activity; intent?: boolean
       live = false;
     };
   }, [inView, step.seq, getDetail, step.summary, inline]);
-  const { text, attachments } = parseUserBody(full ?? step.summary);
+  const { text, attachments } = parseUserBody(inline ?? full ?? step.summary);
   return (
     <div ref={ref} className="mt-3 mb-2 flex min-w-0 justify-end gap-2">
       <div className="flex min-w-0 max-w-[85%] flex-col items-end gap-1.5">
@@ -638,8 +639,10 @@ function UserRow({ step, intent, getDetail }: { step: Activity; intent?: boolean
 // from the detail and shown inline.
 function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: number) => Promise<string> }) {
   const [ref, inView] = useInView();
+  const inline = step.detail && step.detail.length > 0 ? step.detail : null;
   const [full, setFull] = React.useState<string | null>(null);
   React.useEffect(() => {
+    if (inline) return;
     if (!inView) return; // fetch the full answer only when it nears view
     let live = true;
     getDetail(step.seq)
@@ -652,7 +655,7 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
     return () => {
       live = false;
     };
-  }, [inView, step.seq, getDetail, step.summary]);
+  }, [inView, step.seq, getDetail, step.summary, inline]);
   return (
     <div ref={ref} className="mb-2 mt-1 flex min-w-0 flex-col gap-1">
       <div
@@ -662,15 +665,65 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
         }
       >
         {step.is_error ? (
-          <span className="whitespace-pre-wrap">{full ?? step.summary}</span>
+          <span className="whitespace-pre-wrap">{inline ?? full ?? step.summary}</span>
         ) : (
-          <Markdown text={full ?? step.summary} />
+          <Markdown text={inline ?? full ?? step.summary} />
         )}
       </div>
       <ActivityTime ts={step.ts} />
     </div>
   );
 }
+
+type GroupRowProps = {
+  group: Group;
+  getDetail: (seq: number) => Promise<string>;
+  showWorker: boolean;
+  focused: boolean;
+};
+
+// Appending a live frame rebuilds the grouping, but unchanged blocks must retain
+// their render and effects (especially expanded thinking/tool details).
+const GroupRow = React.memo(
+  function GroupRow({ group: g, getDetail, showWorker, focused }: GroupRowProps) {
+    switch (g.type) {
+      case "round":
+        return (
+          <div className="my-2 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            {g.label}
+            <span className="h-px flex-1 bg-border" />
+          </div>
+        );
+      case "user":
+        return <UserRow step={g.step} intent={g.intent} getDetail={getDetail} />;
+      case "answer":
+        return <AnswerBlock step={g.step} getDetail={getDetail} />;
+      case "tool":
+        return <ToolBlock group={g} getDetail={getDetail} showWorker={showWorker} focused={focused} />;
+      case "intercept":
+        return <InterceptCard step={g.step} getDetail={getDetail} />;
+      case "msg":
+        return <MessageBlock group={g} getDetail={getDetail} showWorker={showWorker} />;
+    }
+  },
+  (prev, next) => {
+    if (prev.getDetail !== next.getDetail || prev.showWorker !== next.showWorker || prev.focused !== next.focused) {
+      return false;
+    }
+    const p = prev.group;
+    const n = next.group;
+    if (p.type !== n.type || p.key !== n.key) return false;
+    if (p.type === "round" && n.type === "round") return p.label === n.label;
+    if (p.type === "tool" && n.type === "tool") return p.worker === n.worker && p.use === n.use && p.result === n.result;
+    if (p.type === "msg" && n.type === "msg") {
+      return p.worker === n.worker && p.steps.length === n.steps.length && p.steps.every((step, i) => step === n.steps[i]);
+    }
+    if (p.type === "user" && n.type === "user") return p.step === n.step && p.intent === n.intent;
+    if (p.type === "answer" && n.type === "answer") return p.step === n.step;
+    return p.type === "intercept" && n.type === "intercept" && p.step === n.step;
+  },
+);
 
 // ExecView renders an agent execution replay (planner / worker / main agent) in
 // the compact, grouped, expand-to-detail format — thinking, tool calls/results,
@@ -689,40 +742,27 @@ function ExecView({
   fetchDetail?: (seq: number) => Promise<string>;
   focusedSeq?: number;
 }) {
-  const showWorker = new Set(activity.map((a) => a.worker)).size > 1;
+  const showWorker = React.useMemo(() => new Set(activity.map((a) => a.worker)).size > 1, [activity]);
   // default detail fetcher: the task-scoped activity endpoint. The chat page passes
   // its own (conversation-scoped) fetcher instead.
-  const getDetail = React.useCallback(
-    (seq: number) => (fetchDetail ? fetchDetail(seq) : api.activityDetail(seq, taskId).then((r) => r.detail ?? "")),
+  const getDetail = React.useMemo(
+    () => createActivityDetailCache((seq: number) =>
+      fetchDetail ? fetchDetail(seq) : api.activityDetail(seq, taskId).then((r) => r.detail ?? ""),
+    ),
     [fetchDetail, taskId],
   );
+  const groups = React.useMemo(() => groupSteps(activity, !!chat), [activity, chat]);
   return (
     <div className="flex flex-col">
-      {groupSteps(activity, !!chat).map((g) =>
-        g.type === "round" ? (
-          <div key={"r" + g.key} className="my-2 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
-            <span className="h-px flex-1 bg-border" />
-            {g.label}
-            <span className="h-px flex-1 bg-border" />
-          </div>
-        ) : g.type === "user" ? (
-          <UserRow key={"u" + g.key} step={g.step} intent={g.intent} getDetail={getDetail} />
-        ) : g.type === "answer" ? (
-          <AnswerBlock key={"a" + g.key} step={g.step} getDetail={getDetail} />
-        ) : g.type === "tool" ? (
-          <ToolBlock
-            key={"t" + g.key}
-            group={g}
-            getDetail={getDetail}
-            showWorker={showWorker}
-            focused={focusedSeq != null && g.use?.seq === focusedSeq}
-          />
-        ) : g.type === "intercept" ? (
-          <InterceptCard key={"ic" + g.key} step={g.step} getDetail={getDetail} />
-        ) : (
-          <MessageBlock key={"m" + g.key} group={g} getDetail={getDetail} showWorker={showWorker} />
-        ),
-      )}
+      {groups.map((g) => (
+        <GroupRow
+          key={g.type + g.key}
+          group={g}
+          getDetail={getDetail}
+          showWorker={showWorker}
+          focused={g.type === "tool" && focusedSeq != null && g.use?.seq === focusedSeq}
+        />
+      ))}
     </div>
   );
 }
@@ -730,7 +770,7 @@ function ExecView({
 // Transcript renders a session's activity as a compact grouped execution replay:
 // human turns, thinking, tool calls (command+result paired), and messages — for
 // the main agent (interactive) and worker/planner (read-only) alike.
-export function Transcript({
+export const Transcript = React.memo(function Transcript({
   activity,
   live,
   taskId,
@@ -772,4 +812,4 @@ export function Transcript({
       )}
     </div>
   );
-}
+});

@@ -83,6 +83,7 @@ gate.token
 gate.key
 
 /output/playwright/
+/tests/conversation-performance/local/
 
 # 第一批稳定性搬迁记录
 !/docs/stability-migration.md

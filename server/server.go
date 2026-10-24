@@ -3093,7 +3093,7 @@ func (s *Server) streamActivity(w http.ResponseWriter, r *http.Request) {
 	// Emit a standard SSE id: line so the browser echoes it as Last-Event-ID on
 	// auto-reconnect (see cursor precedence above).
 	sendSSE := func(a db.Activity) {
-		b, _ := json.Marshal(activityDTO(a))
+		b, _ := json.Marshal(activityStreamDTO(a))
 		fmt.Fprintf(w, "id: %d\ndata: %s\n\n", a.ID, b)
 		flusher.Flush()
 	}

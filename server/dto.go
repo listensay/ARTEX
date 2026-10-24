@@ -530,6 +530,15 @@ func activityDTOs(in []db.Activity) []ActivityDTO {
 	return out
 }
 
+// The task stream has the same summary-only contract as paginated history.
+// Full tool output/thinking bodies stay in the DB and are fetched when opened;
+// retaining them in every browser session's live cache defeats history paging.
+func activityStreamDTO(a db.Activity) ActivityDTO {
+	d := activityDTO(a)
+	d.Detail = ""
+	return d
+}
+
 // ---- Agent (frontend "Agent") — string id ----
 
 type AgentDTO struct {
