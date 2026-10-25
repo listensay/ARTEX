@@ -1,0 +1,60 @@
+package server
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/Autumn-27/artex/agent"
+	"github.com/Autumn-27/artex/db"
+)
+
+func TestTaskDeleteAfterAttributedConversationCheckpoint(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprintf("streaming=%t", streaming), func(t *testing.T) {
+			f := newSideHTTPFixture(t)
+			task, err := f.m.CreateTask("attributed conversation delete", "regression", nil, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, _ := strconv.ParseInt(task.ID, 10, 64)
+			t.Cleanup(func() { _, _ = f.m.DeleteTask(task.ID, DeleteTaskOptions{}) })
+			parent, _ := f.conversation(t)
+			close(f.provider.release)
+			chat := agent.NewChatAgent(f.s.llmDirect, "fixture", t.TempDir(), nil, 100000)
+			chat.SetNonStreaming(func() bool { return !streaming })
+			// Finding verification/retest conversations inherit task attribution
+			// exactly this way before Chat adds the conv-* session ID.
+			ctx := agent.WithRunInfo(f.s.ctx, agent.RunInfo{TaskID: id, ExplorationID: task.ExpID})
+			if _, err := chat.Chat(ctx, "mainagent", parent.Key(), "check fixture", 2, time.Second, false, func(db.Activity) {}); err != nil {
+				t.Fatal(err)
+			}
+			f.s.flushSideSnapshots()
+			snap, err := f.m.pg.SideSnapshot(t.Context(), parent.Key())
+			if err != nil || snap == nil {
+				t.Fatalf("conversation checkpoint failed to persist: %+v %v", snap, err)
+			}
+			if snap.Parent != parent {
+				t.Fatalf("conversation checkpoint has task attribution: %+v", snap.Parent)
+			}
+			f.s.side.mu.Lock()
+			pending := len(f.s.side.pending)
+			f.s.side.mu.Unlock()
+			if pending != 0 {
+				t.Fatalf("failed checkpoint stuck in retry queue: %d", pending)
+			}
+			f.call(t, http.MethodDelete, "/api/tasks/"+task.ID, DeleteTaskOptions{
+				DeleteAssets: true, DeleteTraffic: true, DeleteFiles: true,
+				DeleteFindings: true, DeleteLLMRecords: true,
+			}, http.StatusOK)
+			if row, err := f.m.pg.GetTask(id); err != nil || row != nil {
+				t.Fatalf("task deletion failed: %+v %v", row, err)
+			}
+			if snap, err := f.m.pg.SideSnapshot(t.Context(), parent.Key()); err != nil || snap == nil || snap.Parent != parent {
+				t.Fatalf("task deletion damaged independent conversation: %+v %v", snap, err)
+			}
+		})
+	}
+}

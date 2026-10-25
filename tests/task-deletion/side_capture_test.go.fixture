@@ -1,0 +1,46 @@
+package agent
+
+import (
+	"testing"
+
+	"github.com/Autumn-27/artex/sidequestion"
+	"github.com/Autumn-27/norma/agentcore"
+	"github.com/Autumn-27/norma/llm"
+)
+
+func TestSideCaptureSeparatesConversationParentFromTaskAttribution(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  RunInfo
+		want sidequestion.Parent
+	}{
+		{"conversation", RunInfo{SessionID: "conv-123"}, sidequestion.Parent{ConversationID: 123}},
+		{"finding-check", RunInfo{TaskID: 8, ExplorationID: 9, SessionID: "conv-123"}, sidequestion.Parent{ConversationID: 123}},
+		{"inherited-worker", RunInfo{TaskID: 8, ExplorationID: 9, IntentID: 10, SessionID: "conv-123"}, sidequestion.Parent{ConversationID: 123}},
+		{"task-main", RunInfo{TaskID: 8, ExplorationID: 9}, sidequestion.Parent{TaskID: 8, ExplorationID: 9}},
+		{"task-worker", RunInfo{TaskID: 8, ExplorationID: 9, IntentID: 10}, sidequestion.Parent{TaskID: 8, ExplorationID: 9, IntentID: 10}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var snapshots []sidequestion.Snapshot
+			ctx := sidequestion.WithPublisher(t.Context(), func(s sidequestion.Snapshot) { snapshots = append(snapshots, s) })
+			ctx = WithRunInfo(ctx, tc.run)
+			provider := &sideAgentProvider{calls: 1}
+			opts := agentcore.Options{Provider: sidequestion.Bind(provider, sidequestion.Model{Model: "fixture"})}
+			ctx = attachSideCapture(ctx, &opts)
+			if got := RunInfoFrom(ctx); got != tc.run {
+				t.Fatalf("tool attribution changed: got %+v want %+v", got, tc.run)
+			}
+			if _, _, _, err := opts.Deps.CallModelSync(ctx, llm.CompletionRequest{Messages: []llm.Message{llm.UserText("checkpoint")}}); err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshots) == 0 {
+				t.Fatal("checkpoint not published")
+			}
+			for _, snap := range snapshots {
+				if snap.Parent != tc.want {
+					t.Fatalf("mixed checkpoint parent: got %+v want %+v", snap.Parent, tc.want)
+				}
+			}
+		})
+	}
+}
