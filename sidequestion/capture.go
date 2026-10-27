@@ -22,6 +22,14 @@ type Parent struct {
 	IntentID       int64 `json:"intent_id,omitempty"`
 }
 
+// Canonical separates conversation ownership from inherited task attribution.
+func (p Parent) Canonical() Parent {
+	if p.ConversationID > 0 {
+		return Parent{ConversationID: p.ConversationID}
+	}
+	return p
+}
+
 func (p Parent) Key() string {
 	if p.ConversationID > 0 {
 		return fmt.Sprintf("conv-%d", p.ConversationID)
@@ -87,7 +95,7 @@ func Attach(ctx context.Context, parent Parent, deps harness.QueryDeps, provider
 	if publish == nil {
 		return ctx, deps
 	}
-	c := &Capture{parent: parent, runID: time.Now().UnixNano(), publish: publish}
+	c := &Capture{parent: parent.Canonical(), runID: time.Now().UnixNano(), publish: publish}
 	stream, complete := deps.CallModel, deps.CallModelSync
 	if stream == nil {
 		stream = provider.Stream

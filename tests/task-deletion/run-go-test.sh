@@ -2,7 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-PATTERN='Test(Side|TaskDeleteAfterAttributedConversationCheckpoint|EngineDeleteBarrier|AbortDelete|BeginTaskDelete|TaskLifecycleRechecksDeleteBarrier|WaitTaskQuiescent|CommittedTaskDelete|DeleteTask)'
+PATTERN='Test(Side|TaskDelete|TaskLifecycleAndDeleteCascade|EngineDeleteBarrier|Abort(Delete|TaskDelete)|BeginTaskDelete|TaskLifecycleRechecksDeleteBarrier|TaskChatUploadRejectsDeleteBarrier|DeletingRunningTask|StopTask|WaitTaskQuiescent|CommittedTaskDelete|DeleteTask|ManagerDeleteTask|DeleteHost|StageDeleteHostsExact|RecoverArchiveHostDeleteStage)'
 
 if ! command -v go >/dev/null 2>&1; then
   # Match the Docker-only development setup; PostgreSQL tests need a test DSN.
@@ -13,7 +13,7 @@ if ! command -v go >/dev/null 2>&1; then
       overlay=$(mktemp)
       trap '\''rm "$overlay"'\'' EXIT HUP INT TERM
       printf "%s\n" '\''{"Replace":{"/workspace/agent/side_capture_regression_test.go":"/workspace/tests/task-deletion/side_capture_test.go.fixture","/workspace/server/side_checkpoint_delete_regression_test.go":"/workspace/tests/task-deletion/side_checkpoint_delete_test.go.fixture"}}'\'' > "$overlay"
-      go test -p 1 -overlay "$overlay" ./agent ./server ./db -run "$ARTEX_TEST_PATTERN" -count=1 "$@"
+      go test -p 1 -overlay "$overlay" ./agent ./server ./db ./sidequestion ./traffic ./tests/task-deletion -run "$ARTEX_TEST_PATTERN" -count=1 "$@"
     ' sh "$@"
   exit
 fi
@@ -37,4 +37,4 @@ Path(sys.argv[2]).write_text(json.dumps({"Replace": {
 PY
 
 cd "$ROOT"
-go test -p 1 -overlay "$OVERLAY" ./agent ./server ./db -run "$PATTERN" -count=1 "$@"
+go test -p 1 -overlay "$OVERLAY" ./agent ./server ./db ./sidequestion ./traffic ./tests/task-deletion -run "$PATTERN" -count=1 "$@"

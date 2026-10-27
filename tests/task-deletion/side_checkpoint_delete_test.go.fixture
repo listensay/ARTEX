@@ -1,15 +1,191 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/sidequestion"
+	"github.com/Autumn-27/norma/harness"
+	"github.com/Autumn-27/norma/llm"
 )
+
+func TestSideCheckpointNormalizesLegacyConversationAttribution(t *testing.T) {
+	f := newSideHTTPFixture(t)
+	task, err := f.m.CreateTask("legacy checkpoint owner", "regression", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	t.Cleanup(func() { _, _ = f.m.DeleteTask(task.ID, DeleteTaskOptions{}) })
+	parent, _ := f.conversation(t)
+	mixed := parent
+	mixed.TaskID, mixed.ExplorationID, mixed.IntentID = id, task.ExpID, 123
+	snap := f.checkpoint(t, mixed)
+	stored, err := f.m.pg.SideSnapshot(t.Context(), parent.Key())
+	if err != nil || stored == nil || stored.Parent != parent {
+		t.Fatalf("legacy checkpoint kept mixed ownership: %+v %v", stored, err)
+	}
+
+	close(f.provider.release)
+	f.s.side.commands.Lock()
+	ctx, deps := sidequestion.Attach(f.s.ctx, mixed, harness.QueryDeps{}, f.s.llmDirect)
+	_, _, _, captureErr := deps.CallModelSync(ctx, llm.CompletionRequest{Messages: []llm.Message{llm.UserText("legacy capture")}})
+	f.s.side.mu.Lock()
+	pending := f.s.side.pending[parent.Key()]
+	f.s.side.mu.Unlock()
+	f.s.side.commands.Unlock()
+	if captureErr != nil {
+		t.Fatal(captureErr)
+	}
+	if pending.Parent != parent {
+		t.Fatalf("publisher kept mixed ownership: %+v", pending.Parent)
+	}
+	f.s.flushSideSnapshots()
+	f.call(t, http.MethodDelete, "/api/tasks/"+task.ID, DeleteTaskOptions{}, http.StatusOK)
+	if stored, err := f.m.pg.SideSnapshot(t.Context(), parent.Key()); err != nil || stored == nil || stored.Parent != parent {
+		t.Fatalf("task deletion damaged the conversation checkpoint: %+v %v", stored, err)
+	}
+	snap.Version++
+	if err := f.m.pg.SaveSideSnapshot(t.Context(), snap); err != nil {
+		t.Fatalf("conversation checkpoint still depends on the deleted task: %v", err)
+	}
+}
+
+func TestDeleteTaskDoesNotRequireSavingDiscardedCheckpoints(t *testing.T) {
+	for _, databaseFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("databaseFailure=%t", databaseFailure), func(t *testing.T) {
+			f := newSideHTTPFixture(t)
+			task, err := f.m.CreateTask("discard unsaved checkpoint", "regression", nil, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, _ := strconv.ParseInt(task.ID, 10, 64)
+			t.Cleanup(func() { _, _ = f.m.DeleteTask(task.ID, DeleteTaskOptions{}) })
+			parent := sidequestion.Parent{TaskID: id, ExplorationID: task.ExpID}
+			snap := f.checkpoint(t, parent)
+			conversation, _ := f.conversation(t)
+			f.checkpoint(t, conversation)
+
+			name := fmt.Sprintf("test_discard_checkpoint_%d", id)
+			function := name + "_fn"
+			t.Cleanup(func() {
+				_, _ = f.m.pg.Exec(fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON tasks`, name))
+				_, _ = f.m.pg.Exec(fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON side_question_sessions`, name))
+				_, _ = f.m.pg.Exec(fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, function))
+			})
+			if _, err := f.m.pg.Exec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $body$
+BEGIN RAISE EXCEPTION 'forced regression failure on %%', TG_TABLE_NAME; END $body$`, function)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.m.pg.Exec(fmt.Sprintf(`CREATE TRIGGER %s BEFORE INSERT OR UPDATE ON side_question_sessions
+FOR EACH ROW WHEN (NEW.task_id = %d) EXECUTE FUNCTION %s()`, name, id, function)); err != nil {
+				t.Fatal(err)
+			}
+			snap.Version++
+			f.s.side.mu.Lock()
+			f.s.side.pending[parent.Key()] = snap
+			f.s.side.latest[parent.Key()] = snap
+			f.s.side.seen[parent.Key()] = [2]int64{snap.RunID, snap.Version}
+			f.s.side.seen[conversation.Key()] = [2]int64{snap.RunID, 1}
+			otherTaskKey := "task-" + task.ID + "0-exp-100-main"
+			f.s.side.seen[otherTaskKey] = [2]int64{snap.RunID, 1}
+			f.s.side.mu.Unlock()
+			if !f.s.beginTaskDelete(task.ID) {
+				t.Fatal("could not install archive admission barrier")
+			}
+			archiveErr := f.s.drainTaskSideQuestions(t.Context(), task.ID)
+			f.s.abortTaskDelete(task.ID)
+			if archiveErr == nil {
+				t.Fatal("archive accepted an unsaved checkpoint")
+			}
+
+			options := DeleteTaskOptions{DeleteAssets: true, DeleteTraffic: true, DeleteFiles: true, DeleteFindings: true, DeleteLLMRecords: true}
+			if databaseFailure {
+				if _, err := f.m.pg.Exec(fmt.Sprintf(`CREATE TRIGGER %s BEFORE DELETE ON tasks
+FOR EACH ROW WHEN (OLD.id = %d) EXECUTE FUNCTION %s()`, name, id, function)); err != nil {
+					t.Fatal(err)
+				}
+				response := f.call(t, http.MethodDelete, "/api/tasks/"+task.ID, options, http.StatusInternalServerError)
+				if !strings.Contains(response.Body.String(), "forced regression failure on tasks") {
+					t.Fatalf("delete did not reach PostgreSQL: %s", response.Body.String())
+				}
+				f.s.side.commands.Lock()
+				f.s.side.mu.Lock()
+				_, pending := f.s.side.pending[parent.Key()]
+				_, latest := f.s.side.latest[parent.Key()]
+				f.s.side.mu.Unlock()
+				f.s.side.commands.Unlock()
+				if !pending || !latest || f.s.engine.IsDeleting(task.ID) {
+					t.Fatal("failed deletion lost its checkpoint or retained the delete barrier")
+				}
+				if row, err := f.m.pg.GetTask(id); err != nil || row == nil {
+					t.Fatalf("failed deletion lost the task: %+v %v", row, err)
+				}
+				if _, err := f.m.pg.Exec(fmt.Sprintf(`DROP TRIGGER %s ON tasks`, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.call(t, http.MethodDelete, "/api/tasks/"+task.ID, options, http.StatusOK)
+			if row, err := f.m.pg.GetTask(id); err != nil || row != nil {
+				t.Fatalf("task was not deleted: %+v %v", row, err)
+			}
+			if stored, err := f.m.pg.SideSnapshot(t.Context(), parent.Key()); err != nil || stored != nil {
+				t.Fatalf("task checkpoint survived deletion: %+v %v", stored, err)
+			}
+			f.s.side.mu.Lock()
+			_, pending := f.s.side.pending[parent.Key()]
+			_, latest := f.s.side.latest[parent.Key()]
+			_, seen := f.s.side.seen[parent.Key()]
+			_, conversationSeen := f.s.side.seen[conversation.Key()]
+			_, otherTaskSeen := f.s.side.seen[otherTaskKey]
+			f.s.side.mu.Unlock()
+			if pending || latest || seen || !conversationSeen || !otherTaskSeen {
+				t.Fatal("task checkpoint cleanup affected another task or conversation")
+			}
+			if err := f.m.pg.SaveSideSnapshot(t.Context(), snap); !errors.Is(err, db.ErrSideParentGone) {
+				t.Fatalf("late checkpoint can recreate a deleted task session: %v", err)
+			}
+		})
+	}
+}
+
+func TestDeleteTaskWaitsForSideAnswers(t *testing.T) {
+	f := newSideHTTPFixture(t)
+	task, err := f.m.CreateTask("delete active side answer", "regression", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	t.Cleanup(func() { _, _ = f.m.DeleteTask(task.ID, DeleteTaskOptions{}) })
+	parent := sidequestion.Parent{TaskID: id, ExplorationID: task.ExpID}
+	f.checkpoint(t, parent)
+	exchange := decodeSide(t, f.call(t, http.MethodPost, "/api/tasks/"+task.ID+"/chat/side-questions",
+		map[string]string{"question": "active answer", "client_request_id": "delete"}, http.StatusAccepted))
+	select {
+	case <-f.provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("side answer did not start")
+	}
+	f.s.side.mu.Lock()
+	done := f.s.side.runs[exchange.ID].done
+	f.s.side.mu.Unlock()
+	f.call(t, http.MethodDelete, "/api/tasks/"+task.ID, DeleteTaskOptions{}, http.StatusOK)
+	select {
+	case <-done:
+	default:
+		t.Fatal("deletion returned before the side answer stopped")
+	}
+	if row, err := f.m.pg.SideRequest(t.Context(), exchange.ID); err != nil || row != nil {
+		t.Fatalf("side answer survived task deletion: %+v %v", row, err)
+	}
+}
 
 func TestTaskDeleteAfterAttributedConversationCheckpoint(t *testing.T) {
 	for _, streaming := range []bool{false, true} {

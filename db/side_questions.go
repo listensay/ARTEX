@@ -41,6 +41,7 @@ func nullableSideID(id int64) any {
 }
 
 func (d *DB) SaveSideSnapshot(ctx context.Context, s sidequestion.Snapshot) error {
+	s.Parent = s.Parent.Canonical()
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err

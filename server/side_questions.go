@@ -63,6 +63,7 @@ func (s *Server) initSideQuestions() {
 		log.Printf("[btw] recover: %v", err)
 	}
 	s.ctx = sidequestion.WithPublisher(s.ctx, func(snap sidequestion.Snapshot) {
+		snap.Parent = snap.Parent.Canonical()
 		s.side.mu.Lock()
 		defer s.side.mu.Unlock()
 		key := snap.Parent.Key()
@@ -145,9 +146,9 @@ func (s *Server) cancelSideWhere(match func(sidequestion.Parent) bool) []<-chan 
 	return done
 }
 
-// Called after the task admission barrier closes and the main loops drain.
-// Wait for final answer/usage writes before taking the archive snapshot.
-func (s *Server) drainTaskSideQuestions(ctx context.Context, taskID string) error {
+// Stop task-owned side runs after closing task admission. Hard deletion need not
+// save checkpoints that PostgreSQL will immediately cascade away.
+func (s *Server) stopTaskSideQuestions(ctx context.Context, taskID string) error {
 	if s.side == nil {
 		return nil
 	}
@@ -162,6 +163,18 @@ func (s *Server) drainTaskSideQuestions(ctx context.Context, taskID string) erro
 			return ctx.Err()
 		}
 	}
+	return nil
+}
+
+// Archives, unlike hard deletion, must retain the latest checkpoint.
+func (s *Server) drainTaskSideQuestions(ctx context.Context, taskID string) error {
+	if err := s.stopTaskSideQuestions(ctx, taskID); err != nil {
+		return err
+	}
+	if s.side == nil {
+		return nil
+	}
+	id, _ := strconv.ParseInt(taskID, 10, 64)
 	s.flushSideSnapshots()
 	// A failed flush must not silently leave the latest checkpoint out of archive.
 	s.side.mu.Lock()
@@ -172,6 +185,32 @@ func (s *Server) drainTaskSideQuestions(ctx context.Context, taskID string) erro
 		}
 	}
 	return nil
+}
+
+func (s *Server) discardTaskSideSnapshots(taskID string) {
+	if s.side == nil {
+		return
+	}
+	s.side.commands.Lock()
+	defer s.side.commands.Unlock()
+	s.side.mu.Lock()
+	defer s.side.mu.Unlock()
+	prefix := "task-" + taskID + "-"
+	for key := range s.side.pending {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.side.pending, key)
+		}
+	}
+	for key := range s.side.latest {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.side.latest, key)
+		}
+	}
+	for key := range s.side.seen {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.side.seen, key)
+		}
+	}
 }
 
 func (s *Server) cancelWorkerSide(taskID string, expID, iid int64) {

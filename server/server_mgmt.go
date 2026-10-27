@@ -162,7 +162,7 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.drainTaskSideQuestions(drainCtx, id); err != nil {
+	if err := s.stopTaskSideQuestions(drainCtx, id); err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -176,6 +176,7 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 			s.taskAgentMu.Lock()
 			delete(s.taskAgents, id)
 			s.taskAgentMu.Unlock()
+			s.discardTaskSideSnapshots(id)
 			deleted = true
 			writeCommittedTaskDelete(w, result, err)
 			return
@@ -190,6 +191,7 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 	s.taskAgentMu.Lock()
 	delete(s.taskAgents, id)
 	s.taskAgentMu.Unlock()
+	s.discardTaskSideSnapshots(id)
 	deleted = true
 	writeJSON(w, 200, result)
 }
