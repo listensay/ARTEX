@@ -1,0 +1,534 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"reflect"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/Autumn-27/artex/agent"
+	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/guard"
+	"github.com/Autumn-27/norma/hook"
+	actool "github.com/Autumn-27/norma/tool"
+)
+
+const ssTestTemplate = "111111111111111111111111"
+const ssTestProject = "222222222222222222222222"
+const ssTestJob = "333333333333333333333333"
+
+type ssFake struct {
+	scans            atomic.Int32
+	projects         atomic.Int32
+	assets           atomic.Bool
+	finished         atomic.Bool
+	queries          atomic.Int32
+	badTemplate      bool
+	pluginDisabled   bool
+	ambiguous        bool
+	idlessProject    bool
+	projectName      string
+	projectTarget    string
+	onTemplate       func()
+	lastScan         map[string]any
+	defaultCatalog   bool
+	duplicateDefault bool
+}
+
+func (f *ssFake) serve(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		ID     int    `json:"id"`
+		Method string `json:"method"`
+		Params struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		} `json:"params"`
+	}
+	if json.NewDecoder(r.Body).Decode(&request) != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if request.Method == "notifications/initialized" {
+		w.WriteHeader(204)
+		return
+	}
+	var result any
+	if request.Method == "initialize" {
+		result = map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "serverInfo": map[string]any{"name": "ScopeSentry", "version": "test"}}
+	} else {
+		value := any(map[string]any{})
+		switch request.Params.Name {
+		case "list_assets":
+			f.queries.Add(1)
+			items := []any{}
+			if f.assets.Load() && request.Params.Arguments["asset_type"] == "asset" {
+				items = []any{map[string]any{"id": "555555555555555555555555", "url": "https://api.example.test/login", "domain": "api.example.test", "port": "443", "service": "http", "status": 200, "title": "Fixture Login"},
+					map[string]any{"url": "https://evil-example.test/", "domain": "evil-example.test", "port": "443"},
+					map[string]any{"url": "file:///etc/passwd", "domain": "api.example.test"}}
+			}
+			value = map[string]any{"list": items}
+		case "get_scan_template":
+			if f.onTemplate != nil {
+				f.onTemplate()
+			}
+			value = map[string]any{"id": ssTestTemplate, "name": "HTTP mapping", "AssetMapping": []string{"3a0d994a12305cb15a5cb7104d819623"},
+				"Parameters": map[string]any{"AssetMapping": map[string]string{"3a0d994a12305cb15a5cb7104d819623": scopeSentryHTTPParameters}}}
+			if f.badTemplate {
+				value = map[string]any{"name": "default", "AssetMapping": nil}
+			}
+		case "list_scan_templates":
+			name := "HTTP mapping"
+			if f.defaultCatalog {
+				name = scopeSentryDefaultTemplate
+			}
+			items := []any{map[string]any{"id": ssTestTemplate, "name": name, "AssetMapping": nil}}
+			if f.duplicateDefault {
+				items = append(items, map[string]any{"id": "444444444444444444444444", "name": name})
+			}
+			value = map[string]any{"list": items}
+		case "list_nodes":
+			value = map[string]any{"list": []any{map[string]any{"name": "node-1", "state": "1"}}}
+		case "list_plugins":
+			value = map[string]any{"list": []any{map[string]any{"module": "AssetMapping", "hash": "3a0d994a12305cb15a5cb7104d819623", "status": !f.pluginDisabled, "name": "httpx"}}}
+		case "create_project":
+			f.projects.Add(1)
+			f.projectName, _ = request.Params.Arguments["name"].(string)
+			f.projectTarget, _ = request.Params.Arguments["target"].(string)
+			value = map[string]any{"id": ssTestProject, "success": true}
+			if f.idlessProject {
+				value = map[string]any{"success": true, "message": "project created"}
+			}
+		case "list_projects_data":
+			value = map[string]any{"result": map[string]any{"All": []any{map[string]any{"id": ssTestProject, "name": f.projectName}}}}
+		case "get_project":
+			value = map[string]any{"id": ssTestProject, "name": f.projectName, "target": f.projectTarget}
+		case "create_scan_task":
+			f.scans.Add(1)
+			f.lastScan = request.Params.Arguments
+			if f.ambiguous {
+				http.Error(w, "ambiguous upstream failure", 502)
+				return
+			}
+			value = map[string]any{"id": ssTestJob, "success": true}
+		case "list_tasks":
+			value = map[string]any{"list": []any{map[string]any{"id": ssTestJob, "name": f.lastScan["name"]}}}
+		case "get_task":
+			progress, status := 10, 1
+			if f.finished.Load() {
+				progress, status = 100, 3
+			}
+			value = map[string]any{"id": ssTestJob, "name": f.lastScan["name"], "status": status, "progress": progress}
+		}
+		text, _ := json.Marshal(value)
+		result = map[string]any{"content": []any{map[string]any{"type": "text", "text": string(text)}}}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+}
+
+func ssTestServer(t *testing.T, fake *ssFake) (*Server, *Task) {
+	t.Helper()
+	dsn := os.Getenv("ARTEX_SCOPESENTRY_TEST_DSN")
+	if dsn == "" {
+		t.Fatal("run tests/scopesentry-link/run-go-tests.sh against its isolated database")
+	}
+	pg, err := db.Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pg.Close() })
+	if err := pg.EnsureLLMRecordsTable(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.EnsureLLMUsageTable(); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(fake.serve))
+	t.Cleanup(upstream.Close)
+	if _, err := pg.Exec(`UPDATE mcp_servers SET url=$1,enabled=true,env='{}' WHERE name='ScopeSentry'`, upstream.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.Exec(`INSERT INTO agent_visibility(agent_id,resource_kind,resource_id,mcp_tool_name,enabled)
+SELECT a.id,'mcp',m.id,'',true FROM agents a CROSS JOIN mcp_servers m WHERE a.key='worker' AND m.name='ScopeSentry'
+ON CONFLICT(agent_id,resource_kind,resource_id,mcp_tool_name) DO UPDATE SET enabled=true`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.Exec(`INSERT INTO agent_skill_visibility(agent_id,skill_name,enabled) SELECT id,'scopesentry',true FROM agents WHERE key='worker'
+ON CONFLICT(agent_id,skill_name) DO UPDATE SET enabled=true`); err != nil {
+		t.Fatal(err)
+	}
+	row, err := pg.CreateTask("integration test", "read-only fixture target", nil, 0, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &Task{ID: strconv.FormatInt(row.ID, 10), ExpID: row.ExplorationID, Status: "running", Store: pg.Exploration(row.ExplorationID), Guard: guard.New(), notify: make(chan struct{}, 1)}
+	job.Guard.SetRoE(newRoEConfig(pg))
+	m := &Manager{pg: pg, assets: pg.Assets(), tasks: map[string]*Task{job.ID: job}}
+	s := &Server{m: m, engine: NewEngine(m), ctx: context.Background()}
+	s.seedScopeSentryLinkTools()
+	if _, err := pg.Assets().AddAgentScope(row.ID, "root_domain", "example.test", "fixture authorization", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	return s, job
+}
+
+func TestScopeSentryLinkTargets(t *testing.T) {
+	rows := []db.TaskScope{{Kind: "root_domain", Domain: "EXAMPLE.test"}, {Kind: "subdomain", Domain: "api.example.test"}, {Kind: "ip", Net: "192.0.2.10/32"}, {Kind: "cidr", Net: "192.0.2.0/24"}, {Kind: "keyword", Value: "not a scope"}}
+	targets, err := ssTargets(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("targets=%v", targets)
+	}
+	for host, want := range map[string]bool{"example.test": true, "api.example.test": true, "deep.api.example.test": true, "notexample.test": false, "example.test.evil.test": false, "127.0.0.1": false, "192.0.2.10": true, "192.0.2.11": false} {
+		if got := ssInScope(host, targets); got != want {
+			t.Errorf("host=%s got=%v want=%v", host, got, want)
+		}
+	}
+	exact, _ := ssTargets([]db.TaskScope{{Kind: "subdomain", Domain: "api.example.test"}})
+	if ssInScope("deep.api.example.test", exact) {
+		t.Fatal("subdomain scope widened")
+	}
+	if _, err := ssTargets([]db.TaskScope{{Kind: "root_domain", Domain: "example.test || ip==anything"}}); err == nil {
+		t.Fatal("DSL injection accepted")
+	}
+	if !strings.Contains(ssSearch(targets[0]), "ip==") {
+		t.Fatal("IP search did not use exact match")
+	}
+	ordered, _ := ssTargets([]db.TaskScope{rows[2], rows[1], rows[0]})
+	if ssScopeHash(ordered) != ssScopeHash(targets) {
+		t.Fatal("scope order changed identity")
+	}
+}
+
+func TestScopeSentryLinkTemplatesAndJobState(t *testing.T) {
+	for _, raw := range []string{`{"name":"default","AssetMapping":null}`, `{"TargetHandler":["x"],"AssetMapping":["x"]}`, `{"SubdomainScan":["x"]}`, `{"VulnerabilityScan":["x"]}`, `not-json`} {
+		if ssValidateTemplate(raw) == nil {
+			t.Errorf("unsafe/empty template accepted: %s", raw)
+		}
+	}
+	if err := ssValidateTemplate(`{"AssetMapping":["3a0d994a12305cb15a5cb7104d819623"]}`); err == nil {
+		t.Fatal("implicit redirect-following defaults were accepted")
+	}
+	for _, raw := range []string{`{"PortScan":["66b4ddeb983387df2b7ee7726653874d"]}`, `{"AssetHandle":["80718cc3fcb4827d942e6300184707e2"]}`, `{"PortFingerprint":["648a6f49eed57b1737ac702e02985b00"]}`, `{"PortScan":["66b4ddeb983387df2b7ee7726653874d"],"PortFingerprint":["648a6f49eed57b1737ac702e02985b00"]}`} {
+		if ssValidateTemplate(raw) == nil {
+			t.Errorf("Template without a result-producing pipeline accepted: %s", raw)
+		}
+	}
+	if err := ssValidateTemplate(string(ssJSON(map[string]any{"AssetMapping": []string{"3a0d994a12305cb15a5cb7104d819623"},
+		"Parameters": map[string]any{"AssetMapping": map[string]string{"3a0d994a12305cb15a5cb7104d819623": scopeSentryHTTPParameters}}}))); err != nil {
+		t.Fatal(err)
+	}
+	for raw, want := range map[string]string{`{"status":3,"progress":100}`: "completed", `{"status":2,"progress":20}`: "paused", `{"status":1,"progress":20}`: "running", `{"status":"failed"}`: "failed", `{"progress":100}`: "completed", `{}`: "running"} {
+		if got := ssJobState(raw); got != want {
+			t.Errorf("%s got=%s want=%s", raw, got, want)
+		}
+	}
+}
+
+func TestScopeSentryLinkReuseAndProvenance(t *testing.T) {
+	fake := &ssFake{}
+	fake.assets.Store(true)
+	s, task := ssTestServer(t, fake)
+	link, err := s.runScopeSentry(context.Background(), task, "system", true, false)
+	if err != nil || link.State != "imported" || link.Imported != 1 {
+		t.Fatalf("link=%+v error=%v", link, err)
+	}
+	if len(link.MissingTargets) != 0 {
+		t.Fatalf("missing=%v", link.MissingTargets)
+	}
+	var linked, evil, scopes int
+	_ = s.m.pg.QueryRow(`SELECT count(*) FROM assets WHERE $1=ANY(task_ids)`, link.TaskID).Scan(&linked)
+	_ = s.m.pg.QueryRow(`SELECT count(*) FROM assets WHERE domain='evil-example.test'`).Scan(&evil)
+	_ = s.m.pg.QueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1`, link.TaskID).Scan(&scopes)
+	if linked != 1 || evil != 0 || scopes != 1 {
+		t.Fatalf("linked=%d evil=%d scopes=%d", linked, evil, scopes)
+	}
+	var source string
+	_ = s.m.pg.QueryRow(`SELECT source_summary FROM task_asset_links WHERE task_id=$1`, link.TaskID).Scan(&source)
+	if !strings.Contains(source, "ScopeSentry") {
+		t.Fatal("source missing")
+	}
+	var assetID int64
+	var snapshotURL, snapshotTitle string
+	var snapshotStatus int
+	if err := s.m.pg.QueryRow(`SELECT anchor.asset_id,node.payload->'assets'->0->>'url',node.payload->'assets'->0->>'title',
+	(node.payload->'assets'->0->>'status')::int FROM exploration_nodes node
+	JOIN exploration_anchors anchor ON anchor.node_id=node.id
+	WHERE node.exploration_id=$1 AND node.origin='scopesentry'`, task.ExpID).Scan(&assetID, &snapshotURL, &snapshotTitle, &snapshotStatus); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotURL != "https://api.example.test/login" || snapshotTitle != "Fixture Login" || snapshotStatus != 200 {
+		t.Fatal("Remote service snapshot missing measured fields")
+	}
+	if err := s.m.assets.SetTaskAssetSource(link.TaskID, assetID, "manual", "Operator confirmed this asset", nil); err != nil {
+		t.Fatal(err)
+	}
+	before := fake.queries.Load()
+	_, _ = s.runScopeSentry(context.Background(), task, "system", false, false)
+	if fake.queries.Load() != before {
+		t.Fatal("unchanged state was not throttled")
+	}
+	if fake.scans.Load() != 0 || fake.projects.Load() != 0 {
+		t.Fatal("reuse unexpectedly scanned")
+	}
+	var calls int
+	_ = s.m.pg.QueryRow(`SELECT count(*) FROM tool_usage WHERE task_id=$1 AND tool_key='mcp__ScopeSentry__list_assets'`, link.TaskID).Scan(&calls)
+	if calls != 2 {
+		t.Fatalf("actual call ledger=%d", calls)
+	}
+	_, _ = s.runScopeSentry(context.Background(), task, "system", true, false)
+	_ = s.m.pg.QueryRow(`SELECT source_summary FROM task_asset_links WHERE task_id=$1`, link.TaskID).Scan(&source)
+	if source != "Operator confirmed this asset" {
+		t.Fatal("Import overwrote operator provenance")
+	}
+	var snapshots int
+	_ = s.m.pg.QueryRow(`SELECT count(*) FROM exploration_nodes node JOIN exploration_anchors anchor ON anchor.node_id=node.id
+	WHERE node.exploration_id=$1 AND node.origin='scopesentry' AND anchor.asset_id=$2
+	AND node.payload->'assets'->0->>'title'='Fixture Login'`, task.ExpID, assetID).Scan(&snapshots)
+	if snapshots != 1 {
+		t.Fatal("Manual provenance replacement erased or duplicated the remote observation")
+	}
+}
+
+func TestScopeSentryLinkScanRestartAndReturn(t *testing.T) {
+	fake := &ssFake{}
+	s, task := ssTestServer(t, fake)
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	link, _ := s.m.pg.ScopeSentryLink(id)
+	link.AutoScan = true
+	link.TemplateID = ssTestTemplate
+	if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+		t.Fatal(err)
+	}
+	link, err := s.runScopeSentry(context.Background(), task, "system", true, false)
+	if err != nil || link.State != "scanning" || link.ScanID != ssTestJob || link.ProjectID != ssTestProject {
+		t.Fatalf("link=%+v error=%v", link, err)
+	}
+	if fake.scans.Load() != 1 || fake.projects.Load() != 1 {
+		t.Fatalf("scans=%d projects=%d", fake.scans.Load(), fake.projects.Load())
+	}
+	if fake.lastScan["targetSource"] != "general" || fake.lastScan["target"] != "example.test" || fake.lastScan["scheduledTasks"] != false {
+		t.Fatalf("unsafe params=%v", fake.lastScan)
+	}
+	restarted := &Server{m: s.m, engine: NewEngine(s.m), ctx: context.Background()}
+	_, err = restarted.runScopeSentry(context.Background(), task, "system", true, true)
+	if err != nil || fake.scans.Load() != 1 {
+		t.Fatal("restart or repeated request duplicated scan")
+	}
+	fake.assets.Store(true)
+	fake.finished.Store(true)
+	link, err = restarted.runScopeSentry(context.Background(), task, "system", true, false)
+	if err != nil || link.ScanState != "completed" || link.State != "imported" || link.Imported != 1 {
+		t.Fatalf("return=%+v err=%v", link, err)
+	}
+	_, _ = restarted.runScopeSentry(context.Background(), task, "system", true, true)
+	if fake.scans.Load() != 1 {
+		t.Fatal("completed scope submitted twice")
+	}
+}
+
+func TestScopeSentryLinkIDlessProject(t *testing.T) {
+	fake := &ssFake{idlessProject: true}
+	s, task := ssTestServer(t, fake)
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	link, _ := s.m.pg.ScopeSentryLink(id)
+	link.AutoScan = true
+	link.TemplateID = ssTestTemplate
+	if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.runScopeSentry(context.Background(), task, "system", true, false)
+	if err != nil || result.ScanID != ssTestJob || result.ProjectID != ssTestProject || fake.projects.Load() != 1 {
+		t.Fatalf("result=%+v err=%v project calls=%d", result, err, fake.projects.Load())
+	}
+}
+
+func TestScopeSentryLinkNormallyStartedTask(t *testing.T) {
+	for _, started := range []bool{false, true} {
+		t.Run(strconv.FormatBool(started), func(t *testing.T) {
+			fake := &ssFake{}
+			s, task := ssTestServer(t, fake)
+			task.updateLifecycle(func(state *taskLifecycleState) { state.Status = "created" })
+			if started {
+				s.engine.started.Store(task.ID, true)
+			}
+			id, _ := strconv.ParseInt(task.ID, 10, 64)
+			link, _ := s.m.pg.ScopeSentryLink(id)
+			link.AutoScan = true
+			link.TemplateID = ssTestTemplate
+			if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+				t.Fatal(err)
+			}
+			result, err := s.runScopeSentry(context.Background(), task, "system", true, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if started && (result.State != "scanning" || fake.scans.Load() != 1) {
+				t.Fatalf("Normal created+started task was blocked: %+v", result)
+			}
+			if !started && (result.State != "blocked" || fake.scans.Load() != 0) {
+				t.Fatal("Unstarted task caused a scan")
+			}
+		})
+	}
+	for _, status := range []string{"done", "failed", "timeout", "paused"} {
+		if scopeSentryTaskRunning(taskLifecycleState{Status: status}, true) {
+			t.Fatalf("terminal/paused %s treated as running", status)
+		}
+	}
+}
+
+func TestScopeSentryLinkTemplateProjection(t *testing.T) {
+	fake := &ssFake{}
+	s, _ := ssTestServer(t, fake)
+	r := httptest.NewRequest(http.MethodGet, "/api/sync/scopesentry/templates", nil)
+	w := httptest.NewRecorder()
+	s.scopeSentryTemplates(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	var response struct {
+		Templates []struct {
+			ID     string `json:"id"`
+			Usable bool   `json:"usable"`
+			Reason string `json:"reason"`
+		} `json:"templates"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Templates) != 1 || !response.Templates[0].Usable || response.Templates[0].ID != ssTestTemplate {
+		t.Fatalf("Projected list was mistaken for an empty template: %s", w.Body)
+	}
+}
+
+func TestScopeSentryLinkFailureAndBoundaries(t *testing.T) {
+	for _, name := range []string{"disabled", "unbound", "terminal", "empty-template", "plugins-disabled", "constraint", "changed-scope", "guard-deny", "template-changed-during-approval", "plugin-disabled-during-approval", "pause-during-approval", "deleting", "ambiguous"} {
+		t.Run(name, func(t *testing.T) {
+			fake := &ssFake{}
+			s, task := ssTestServer(t, fake)
+			id, _ := strconv.ParseInt(task.ID, 10, 64)
+			link, _ := s.m.pg.ScopeSentryLink(id)
+			link.AutoScan = true
+			link.TemplateID = ssTestTemplate
+			switch name {
+			case "disabled":
+				link.Enabled = false
+			case "unbound":
+				_, _ = s.m.pg.Exec(`UPDATE agent_visibility SET enabled=false WHERE agent_id=(SELECT id FROM agents WHERE key='worker') AND resource_id=(SELECT id FROM mcp_servers WHERE name='ScopeSentry')`)
+			case "terminal":
+				task.updateLifecycle(func(st *taskLifecycleState) { st.Status = "done" })
+			case "empty-template":
+				fake.badTemplate = true
+			case "plugins-disabled":
+				fake.pluginDisabled = true
+			case "constraint":
+				_, _ = s.m.pg.Exec(`INSERT INTO task_constraints(exploration_id,kind,text) VALUES($1,'deny','禁止端口扫描')`, task.ExpID)
+			case "changed-scope":
+				fake.onTemplate = func() { _, _ = s.m.assets.AddAgentScope(id, "subdomain", "other.test", "new authorization", "manual") }
+			case "guard-deny":
+				task.Guard.Hooks().On(hook.PreToolUse, func(_ context.Context, event hook.Event) hook.Result {
+					if event.ToolName == "mcp__ScopeSentry__create_scan_task" {
+						var params map[string]any
+						_ = json.Unmarshal(event.Input, &params)
+						if params["project"] == nil {
+							t.Error("approval did not receive final project parameters")
+						}
+						return hook.Result{Decision: "block", Message: "approval rejected"}
+					}
+					return hook.Result{}
+				})
+			case "pause-during-approval":
+				task.Guard.Hooks().On(hook.PreToolUse, func(_ context.Context, event hook.Event) hook.Result {
+					if event.ToolName == "mcp__ScopeSentry__create_scan_task" {
+						s.engine.Pause(task.ID, nil)
+					}
+					return hook.Result{}
+				})
+			case "template-changed-during-approval", "plugin-disabled-during-approval":
+				task.Guard.Hooks().On(hook.PreToolUse, func(_ context.Context, event hook.Event) hook.Result {
+					if event.ToolName == "mcp__ScopeSentry__create_scan_task" {
+						if name == "template-changed-during-approval" {
+							fake.badTemplate = true
+						} else {
+							fake.pluginDisabled = true
+						}
+					}
+					return hook.Result{}
+				})
+			case "deleting":
+				s.engine.BeginDelete(task.ID)
+			case "ambiguous":
+				fake.ambiguous = true
+			}
+			if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+				t.Fatal(err)
+			}
+			link, err := s.runScopeSentry(context.Background(), task, "system", true, false)
+			if name == "deleting" {
+				if err == nil {
+					t.Fatal("delete barrier ignored")
+				}
+
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "ambiguous" {
+				if link.State != "scanning" || link.ScanName == "" {
+					t.Fatalf("ambiguous identity lost: %+v", link)
+				}
+				_, _ = s.runScopeSentry(context.Background(), task, "system", true, true)
+				if fake.scans.Load() != 1 {
+					t.Fatal("ambiguous side effect retried")
+				}
+			} else if fake.scans.Load() != 0 {
+				t.Fatalf("%s caused a scan", name)
+			}
+		})
+	}
+}
+
+func TestScopeSentryLinkConfigAndRole(t *testing.T) {
+	fake := &ssFake{}
+	s, task := ssTestServer(t, fake)
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	s.seedScopeSentryLinkTools()
+	wireTools(s.m.pg, nil)
+	t.Cleanup(func() { agent.ToolResolve = nil })
+	status := s.scopeSentryLinkTools()[0]
+	tools := agent.ToolResolve(context.Background(), "verifier", []actool.CoreTool{status})
+	result, err := tools[0].Call(agent.WithRunInfo(context.Background(), agent.RunInfo{TaskID: id}), ssJSON(map[string]any{"refresh": true}), nil)
+	if err != nil || !result.IsError {
+		t.Fatal("verifier bulk refresh was not rejected")
+	}
+	if fake.queries.Load() != 0 {
+		t.Fatal("read-only role performed reconnaissance")
+	}
+	link, _ := s.m.pg.ScopeSentryLink(id)
+	link.TemplateID = ssTestTemplate
+	_ = s.m.pg.SaveScopeSentryLink(link)
+	r := httptest.NewRequest("POST", "/api/tasks/"+task.ID+"/scopesentry", strings.NewReader(`{"action":"config","enabled":false}`))
+	r.SetPathValue("id", task.ID)
+	w := httptest.NewRecorder()
+	s.taskScopeSentryAction(w, r)
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	stored, _ := s.m.pg.ScopeSentryLink(id)
+	if stored.Enabled || stored.TemplateID != ssTestTemplate {
+		t.Fatalf("partial configuration lost fields: %+v", stored)
+	}
+	if !reflect.DeepEqual(stored.Targets, link.Targets) {
+		t.Fatal("configuration unexpectedly rewrote targets")
+	}
+}

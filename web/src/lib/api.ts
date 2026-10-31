@@ -1,4 +1,5 @@
 import type { StageEntry } from "./types";
+import type { ScopeSentryLink } from "./types";
 import type { IntranetTopology, ShellSession, SessionExecResult, SessionFsEntry, SessionReadResult, TunnelInfo, Credential, PendingScopeRow } from "./types";
 // Real backend client. /api/* is proxied to the Go backend (next.config rewrites).
 // Returns the domain types in lib/types.ts. Shapes match the backend handlers;
@@ -970,13 +971,11 @@ export const api = {
   // 全局重试策略（五层各自的次数+间隔）。全 0 = 全部走内置默认。
   llmRetryPolicy: () => get<LLMRetryPolicy>("/llm/retry-policy"),
   saveLLMRetryPolicy: (p: LLMRetryPolicy) => post<LLMRetryPolicy>("/llm/retry-policy", p),
-  fetchLLMModels: (provider: string, base_url: string, api_key: string, proxy = "", profile_id?: number) =>
-    post<{ ok: boolean; error?: string; models?: string[] }>("/llm/models", {
-      provider,
-      base_url,
-      api_key,
-      proxy,
-      profile_id,
+  fetchLLMModels: (provider: string, base_url: string, api_key: string, proxy = "", profile_id?: number, signal?: AbortSignal) =>
+    http<{ ok: boolean; error?: string; models?: string[] }>("/llm/models", {
+      method: "POST",
+      body: JSON.stringify({ provider, base_url, api_key, proxy, profile_id }),
+      signal,
     }),
 
   // ---- agents ----
@@ -1093,6 +1092,14 @@ export const api = {
   refreshMcpServer: (id: number) => post<{ tools: MCPTool[] }>(`/mcp/${id}/refresh`, {}).then((r) => arr(r.tools)),
 
   // ---- 资产同步 (ScopeSentry 数据源) ----
+  taskScopeSentry: (taskId: string) => get<ScopeSentryLink>(`/tasks/${taskId}/scopesentry`),
+  taskScopeSentryAction: (taskId: string, body: {
+    action: "config" | "refresh" | "scan";
+    enabled?: boolean;
+    auto_scan?: boolean;
+    template_id?: string;
+  }) => post<ScopeSentryLink>(`/tasks/${taskId}/scopesentry`, body),
+  ssTemplates: () => get<{ templates: { id: string; name: string; usable: boolean; default?: boolean; reason: string }[] }>("/sync/scopesentry/templates"),
   ssStatus: () =>
     get<{ exists: boolean; configured: boolean; enabled: boolean; reachable: boolean; url?: string; tools: string[] }>(
       "/sync/scopesentry/status",

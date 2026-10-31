@@ -34,6 +34,9 @@ func meterTool(t actool.CoreTool, recorder toolUsageRecorder, toolKey, agentKey 
 }
 
 func (m *meteredTool) Call(ctx context.Context, input json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
+	ri := agent.RunInfoFrom(ctx)
+	ri.AgentKey = m.agentKey
+	ctx = agent.WithRunInfo(ctx, ri)
 	if err := m.recorder.InsertToolUsage(&db.ToolUsage{
 		ToolKey:       m.toolKey,
 		AgentKey:      m.agentKey,

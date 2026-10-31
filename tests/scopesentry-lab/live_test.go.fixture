@@ -1,0 +1,321 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/guard"
+	"github.com/Autumn-27/norma/hook"
+)
+
+var ssLabHosts = []string{"172.30.243.11", "172.30.243.12", "172.30.243.13", "172.30.243.14", "172.30.243.15"}
+
+func ssLiveLabServer(t *testing.T) *Server {
+	t.Helper()
+	dsn := os.Getenv("ARTEX_SS_LAB_DSN")
+	if dsn == "" {
+		t.Fatal("Use tests/scopesentry-lab/run-live-tests.py with its isolated test database")
+	}
+	pg, err := db.Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pg.Close() })
+	var database string
+	if err := pg.QueryRow(`SELECT current_database()`).Scan(&database); err != nil || !strings.HasPrefix(database, "artex_ss_lab_tests_") {
+		t.Fatal("Live lab tests refuse non-test databases")
+	}
+	// Unique task IDs prevent collision with previous live ScopeSentry scan names.
+	start := time.Now().UnixMilli()
+	if _, err := pg.Exec(`SELECT setval(pg_get_serial_sequence('tasks','id'),$1,false)`, start); err != nil {
+		t.Fatal(err)
+	}
+	key := os.Getenv("ARTEX_SS_LAB_MCP_KEY")
+	if key == "" {
+		t.Fatal("Missing live ScopeSentry MCP credential")
+	}
+	headers, _ := json.Marshal(map[string]string{"X-API-Key": key})
+	if _, err := pg.Exec(`UPDATE mcp_servers SET url='http://scopesentry:8082/mcp',env=$1,enabled=true WHERE name='ScopeSentry'`, headers); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.Exec(`INSERT INTO agent_visibility(agent_id,resource_kind,resource_id,mcp_tool_name,enabled)
+SELECT a.id,'mcp',m.id,'',true FROM agents a CROSS JOIN mcp_servers m WHERE a.key='worker' AND m.name='ScopeSentry'
+ON CONFLICT(agent_id,resource_kind,resource_id,mcp_tool_name) DO UPDATE SET enabled=true`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.Exec(`INSERT INTO agent_skill_visibility(agent_id,skill_name,enabled) SELECT id,'scopesentry',true FROM agents WHERE key='worker'
+ON CONFLICT(agent_id,skill_name) DO UPDATE SET enabled=true`); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}}
+	s := &Server{m: m, engine: NewEngine(m), ctx: context.Background()}
+	s.seedScopeSentryLinkTools()
+	return s
+}
+
+func ssLiveLabTask(t *testing.T, s *Server, name string, hosts []string, auto bool) *Task {
+	t.Helper()
+	row, err := s.m.pg.CreateTaskWithOptions("Isolated local ScopeSentry lab fixture: "+name, "Verify service mapping and asset provenance only; no exploitation or external targets", db.TaskCreateOptions{Name: "SS Lab: " + name, PlanHeartbeatSeconds: 300})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &Task{ID: strconv.FormatInt(row.ID, 10), ExpID: row.ExplorationID, Status: "running", Store: s.m.pg.Exploration(row.ExplorationID), Guard: guard.New(), notify: make(chan struct{}, 1)}
+	task.Guard.SetRoE(newRoEConfig(s.m.pg))
+	s.m.tasks[task.ID] = task
+	for _, host := range hosts {
+		if _, err := s.m.assets.AddAgentScope(row.ID, "ip", host, "Explicitly authorized isolated local lab host", "manual"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link, err := s.m.pg.ScopeSentryLink(row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link.TemplateID = os.Getenv("ARTEX_SS_LAB_TEMPLATE_ID")
+	link.AutoScan = auto
+	if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func ssLiveMetrics(t *testing.T, host string) map[string]int {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, "http://"+host+"/__lab_metrics", nil)
+	req.Header.Set("X-Lab-Observer", "1")
+	client := &http.Client{Transport: &http.Transport{}, Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var metrics struct {
+		Requests map[string]int `json:"requests"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&metrics); err != nil {
+		t.Fatal(err)
+	}
+	return metrics.Requests
+}
+
+func TestScopeSentryLiveLab(t *testing.T) {
+	s := ssLiveLabServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	cl, err := s.scopeSentryClient(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	templateID := os.Getenv("ARTEX_SS_LAB_TEMPLATE_ID")
+	text, err := cl.Call(ctx, "get_scan_template", map[string]any{"id": templateID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ssValidateTemplate(text); err != nil {
+		t.Fatal(err)
+	}
+	text, err = cl.Call(ctx, "list_plugins", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ssCheckEnabledPlugins(stringMustTemplate(ctx, cl, templateID), text); err != nil {
+		t.Fatal(err)
+	}
+	canaryBefore := ssLiveMetrics(t, "172.30.243.99")
+	portalBefore := ssLiveMetrics(t, "172.30.243.11")
+
+	task := ssLiveLabTask(t, s, "HTTP 200 + HTTP 401 + redirect + self-signed TLS + closed ports", ssLabHosts, true)
+	// Explicitly scan this batch even if a prior test already populated the live asset store.
+	link, err := s.runScopeSentry(ctx, task, "system", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.State != "scanning" || link.ScanName == "" {
+		t.Fatalf("Live scan was not submitted: %+v", link)
+	}
+	scanName := link.ScanName
+	t.Logf("Real ScopeSentry scan: name=%s id=%s project=%s", scanName, link.ScanID, link.ProjectID)
+	for ctx.Err() == nil {
+		time.Sleep(5 * time.Second)
+		link, err = s.runScopeSentry(ctx, task, "system", true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("state=%s remote=%s imported=%d", link.State, link.ScanState, link.Imported)
+		if link.ScanState == "completed" {
+			break
+		}
+		if link.State == "blocked" || link.State == "failed" || link.ScanState == "failed" {
+			t.Fatalf("Live scan failed: %+v", link)
+		}
+	}
+	if link.ScanState != "completed" {
+		t.Fatalf("Live scan did not complete before deadline: %+v", link)
+	}
+	if link.State != "imported" {
+		t.Fatalf("Completed scan with a closed-port negative control was mislabeled as needing another scan: %+v", link)
+	}
+	// Completion may precede the final storage flush: require asset evidence, not just progress=100.
+	for i := 0; i < 6 && link.Imported < 4; i++ {
+		time.Sleep(3 * time.Second)
+		link, err = s.runScopeSentry(ctx, task, "system", true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	assets, err := s.m.assets.QueryByTask(id, "", 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, asset := range assets {
+		if asset.Type != "service" {
+			continue
+		}
+		seen[asset.Domain] = true
+		if !ssInScope(asset.Domain, []ssTarget{{Host: ssLabHosts[0]}, {Host: ssLabHosts[1]}, {Host: ssLabHosts[2]}, {Host: ssLabHosts[3]}, {Host: ssLabHosts[4]}}) {
+			t.Fatalf("Out-of-scope asset linked: %+v", asset)
+		}
+		status := 0
+		if asset.StatusCode != nil {
+			status = *asset.StatusCode
+		}
+		t.Logf("Returned real service: host=%s url=%s status=%d title=%s", asset.Domain, asset.URL, status, asset.PageTitle)
+		if asset.Domain == ssLabHosts[0] && (asset.StatusCode == nil || *asset.StatusCode != 200 || !strings.Contains(asset.PageTitle, "Management Portal")) {
+			t.Errorf("HTTP 200 fixture was not measured: %+v", asset)
+		}
+		if asset.Domain == ssLabHosts[1] && (asset.StatusCode == nil || *asset.StatusCode != 401) {
+			t.Errorf("Authentication fixture status was lost: %+v", asset)
+		}
+		if asset.Domain == ssLabHosts[2] && (asset.StatusCode == nil || *asset.StatusCode != 302) {
+			t.Errorf("Redirect fixture followed or lost status: %+v", asset)
+		}
+		if asset.Domain == ssLabHosts[3] && !strings.HasPrefix(asset.URL, "https://") {
+			t.Errorf("Self-signed TLS fixture was not discovered: %+v", asset)
+		}
+	}
+	for _, host := range ssLabHosts[:4] {
+		if !seen[host] {
+			t.Errorf("No real service returned for %s", host)
+		}
+	}
+	if seen[ssLabHosts[4]] {
+		t.Error("Closed-port fixture produced a false service")
+	}
+	if seen["172.30.243.99"] {
+		t.Error("Out-of-scope canary was imported")
+	}
+	var scopes, provenance int
+	if err := s.m.pg.QueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1`, id).Scan(&scopes); err != nil {
+		t.Fatal(err)
+	}
+	if scopes != len(ssLabHosts) {
+		t.Fatal("Import widened registered scope")
+	}
+	if err := s.m.pg.QueryRow(`SELECT count(*) FROM task_asset_links WHERE task_id=$1 AND source_summary LIKE 'ScopeSentry%'`, id).Scan(&provenance); err != nil {
+		t.Fatal(err)
+	}
+	if provenance < 4 {
+		t.Fatal("Imported assets lack ScopeSentry provenance")
+	}
+	canaryAfter := ssLiveMetrics(t, "172.30.243.99")
+	if ssLiveMetrics(t, "172.30.243.11")["/"] <= portalBefore["/"] {
+		t.Error("Fixture was only reused, not freshly scanned")
+	}
+	for route, count := range canaryAfter {
+		if count != canaryBefore[route] {
+			t.Errorf("Out-of-scope redirect was requested: %s +%d", route, count-canaryBefore[route])
+		}
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
+
+	t.Run("restart_and_duplicate", func(t *testing.T) {
+		restarted := &Server{m: s.m, engine: NewEngine(s.m), ctx: ctx}
+		current, err := restarted.runScopeSentry(ctx, task, "system", true, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.ScanName != scanName || current.ScanID != link.ScanID {
+			t.Fatal("Restart lost remote identity")
+		}
+		text, err := cl.Call(ctx, "list_tasks", map[string]any{"search": scanName, "pageIndex": 1, "pageSize": 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result struct {
+			List []struct {
+				Name string `json:"name"`
+			} `json:"list"`
+		}
+		_ = json.Unmarshal([]byte(text), &result)
+		count := 0
+		for _, job := range result.List {
+			if job.Name == scanName {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("Remote duplicate count=%d", count)
+		}
+	})
+	t.Run("reuse_without_new_scan", func(t *testing.T) {
+		reuse := ssLiveLabTask(t, s, "Reuse earlier scan results", ssLabHosts[:4], true)
+		result, err := s.runScopeSentry(ctx, reuse, "system", true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Imported < 4 || result.ScanName != "" {
+			t.Fatalf("Existing results were not reused: %+v", result)
+		}
+	})
+	t.Run("approval_rejection", func(t *testing.T) {
+		denied := ssLiveLabTask(t, s, "Deny new scan", []string{ssLabHosts[0]}, false)
+		denied.Guard.Hooks().On(hook.PreToolUse, func(_ context.Context, event hook.Event) hook.Result {
+			if strings.HasPrefix(event.ToolName, "mcp__ScopeSentry__create_") {
+				return hook.Result{Decision: "block", Message: "Local test approval denied"}
+			}
+			return hook.Result{}
+		})
+		result, err := s.runScopeSentry(ctx, denied, "system", true, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.State != "blocked" || result.ScanName != "" {
+			t.Fatalf("Approval rejection did not stop remote side effect: %+v", result)
+		}
+	})
+	t.Run("paused_and_terminal", func(t *testing.T) {
+		for _, status := range []string{"paused", "done"} {
+			stopped := ssLiveLabTask(t, s, "No scan for "+status, []string{ssLabHosts[0]}, false)
+			stopped.updateLifecycle(func(lifecycle *taskLifecycleState) { lifecycle.Status = status; lifecycle.Paused = status == "paused" })
+			result, err := s.runScopeSentry(ctx, stopped, "system", true, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ScanName != "" {
+				t.Fatal("Stopped task created a scan")
+			}
+		}
+	})
+	t.Logf("PASS: real HTTP 200/401/302/TLS discovery, closed-port negative control, canary requests unchanged, duplicate protection, reuse, approval rejection, paused/terminal barriers; remote evidence=%s", scanName)
+}
+
+func stringMustTemplate(ctx context.Context, cl ssCaller, id string) string {
+	text, err := cl.Call(ctx, "get_scan_template", map[string]any{"id": id})
+	if err != nil {
+		return fmt.Sprintf("invalid-template: %v", err)
+	}
+	return text
+}

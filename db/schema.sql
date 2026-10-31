@@ -936,6 +936,13 @@ CREATE TABLE IF NOT EXISTS tool_usage (
 CREATE INDEX IF NOT EXISTS idx_tool_usage_tool ON tool_usage(tool_key, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_usage_task ON tool_usage(task_id);
 
+-- Task-owned ScopeSentry linkage; configuration and remote job identity survive restart.
+CREATE TABLE IF NOT EXISTS task_scopesentry_links (
+    task_id BIGINT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    data JSONB NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- =====================================================================
 -- H. 内置工具目录
 -- =====================================================================

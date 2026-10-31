@@ -291,6 +291,14 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 			return nil, fmt.Errorf("restore %s: %w", table, err)
 		}
 	}
+	if raw, ok := remappedTables["task_scopesentry_links"]; ok {
+		if _, err := tx.Exec(`DELETE FROM task_scopesentry_links WHERE task_id=$1`, taskID); err != nil {
+			return nil, err
+		}
+		if err := insertArchiveRows(tx, "task_scopesentry_links", raw); err != nil {
+			return nil, err
+		}
+	}
 	if err := restoreInterceptRows(tx, remappedTables["intercept_pending"]); err != nil {
 		return nil, err
 	}
@@ -388,6 +396,7 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 		"exploration_nodes": true, "exploration_edges": true, "exploration_anchors": true,
 		"task_constraints": true, "activity": true, "task_asset_links": true, "findings": true,
 		"llm_records": true, "llm_usage": true, "skill_usage": true, "tool_usage": true,
+		"task_scopesentry_links": true,
 		"side_question_sessions": true, "side_question_requests": true,
 	}
 	if !allowed[table] {
@@ -577,6 +586,20 @@ func remapArchiveAssetReferences(tables map[string]json.RawMessage, mapping map[
 					continue
 				}
 				container = payload
+				if row["origin"] == "scopesentry" {
+					observations, _ := payload["assets"].([]any)
+					for _, observation := range observations {
+						asset, ok := observation.(map[string]any)
+						if !ok {
+							continue
+						}
+						if old, ok := jsonInt64(asset["asset_id"]); ok {
+							if replacement, exists := mapping[old]; exists {
+								asset["asset_id"] = replacement
+							}
+						}
+					}
+				}
 			}
 			if values, ok := container[key].([]any); ok {
 				for i, value := range values {

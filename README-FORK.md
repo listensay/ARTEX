@@ -2,6 +2,74 @@
 
 本文仅记录本仓库二次开发新增的功能、配置和部署差异。原项目文档保留在 [README.md](README.md)，保持原样；后续二次开发说明统一维护在本文件。Agent 协作规则见 [AGENTS.md](AGENTS.md)。
 
+## 根据 Base URL 选择模型
+
+「系统 → 大模型配置」的新建／编辑表单在填写 Base URL 后自动获取模型列表；需鉴权的接口填写 API Key 后会重新获取，编辑配置时 Key 留空沿用已保存的 Key。支持 OpenAI、Responses 和 Anthropic 兼容接口，以及无需鉴权的模型列表；可填写根地址、`/v1` 前缀或完整接口地址。留空 Base URL 时使用所选格式的官方地址，需要 API Key。
+
+点击「选择模型」可搜索并选择返回的模型，也可手动输入模型名或刷新列表。修改地址、Key、格式或代理会重新获取，旧请求不会覆盖新列表；失败或空列表不影响手动配置。模型列表经现有后端接口获取，沿用表单代理，不新增配置或数据库迁移。
+
+## ScopeSentry 任务联动（2026-10-31）
+
+原有部署完成了服务、MCP 与角色绑定；本次补上任务运行链路。规划和执行入口自动检索任务已登记的明确域名／单个 IP，按目标显示存量数据缺口，回流范围内资产到「测试资产」，记录来源与真实 MCP 调用。查询最多 16 个目标、回流最多 500 个资产；企业、关键词和宽网段不作为隐式扫描目标，需先登记明确目标。只回流数据，不因此扩大授权范围或直接确认漏洞。
+
+「任务总览 → ScopeSentry 联动」可关闭存量联动、检索并回流、选择模板、授权缺数据时自动补扫，或显式发起一次测绘。新扫描默认不自动授权；只接受已启用模块的固定目标端口／服务测绘模板，空 `default` 模板不能执行。模板选择留空时，仅在已经授权自动补扫或显式请求扫描的路径中查找唯一的 `ARTEX HTTP service mapping (fixed targets)`，读取详情核验后使用；不会因发现默认模板就开启扫描授权，缺失、同名冲突或被修改时停止。模板只接受已核验的 httpx、WebFingerprint、SkipCdn、RustScan、fingerprintx 插件及参数；httpx 必须显式使用下方安全参数，不能依赖会跟随跳转的默认值。不允许目标转换、扩域、爬虫、目录／漏洞流水线。审批结束及每次创建远端项目／扫描前重新核对任务状态、权限、范围约束、模板内容与插件启用状态，审批期间变化则停止。任务内扫描统一经 `scopesentry_scan` 校验，原始 MCP 创建扫描不能绕过该流程；Auto 的独立平台操作不受此任务入口限制。已有 MCP／skill 关闭、解绑和工具配置保留。
+
+文字约束只对可确定的整句主机范围声明自动核验，例如 `仅允许对隔离靶机 http://172.30.243.22 进行测试`：必须与登记范围相交，仅缩小范围，不能授权新主机或扩展子域。禁止操作、路径／端口／速率等限制及无法解析的语句仍阻止新扫描，不忽略或删除约束；文字范围与登记范围冲突时连存量检索也停止。其他操作限制不阻止只读存量检索，但不被视为新扫描授权。
+
+回流事实锚定本地资产，并保存最多 100 条远端记录的 ID、URL、端口、协议、状态码、标题、产品字段及观察时间，不保存响应正文或凭据。后续 Agent／用户登记可以更新资产列表的单一来源标签，但不删除该事实及锚点；追溯 ScopeSentry 来源应同时查看黑板回流事实，不能只依赖最新的列表标签。归档恢复遇到本地资产 ID 冲突时，快照的本地 ID 与锚点一起重映射，远端记录 ID 和测绘字段保持原样。
+
+扫描固定使用已登记的目标，不从项目／资产搜索隐式扩展目标；项目创建和扫描提交均经过任务 Guard、RoE 与现有拦截审批。扫描标识先持久化再提交，重启和重复请求不会为同一范围重复创建扫描；提交结果不明时查询并核对远端，不盲目重试。平台约每分钟跟踪已提交扫描并回流结果，状态与跳过／失败原因在任务总览和会话记录可见。
+
+已完成、暂停或删除的任务不创建新扫描，不会自动复活任务。关闭联动或暂停 ARTEX 不会自动终止已经提交的远端扫描，需要在 ScopeSentry 管理页面处理。任务联动配置与远端标识随数据库持久化、任务归档／恢复保留。更新本机源码部署仍使用现有 `docker compose up -d --build --wait --wait-timeout 900 artex`。
+
+### 固定目标 HTTP 模板与本机隔离靶场
+
+`python3 deploy/scopesentry/configure-http-template.py` 幂等创建 `ARTEX HTTP service mapping (fixed targets)` 并启用内置 httpx，不修改其他插件、既有同名异配置模板或启动扫描。当前管理员密码与初始密码不同时通过 `SCOPESENTRY_ADMIN_PASSWORD` 提供，不重置密码。定义位于 `deploy/scopesentry/templates/artex-http-services.json`；只使用 httpx，显式关闭跟随跳转、截图、TLS 扩展探测、绕过头，并把并发设为 3。已部署 ScopeSentry 的项目创建响应没有 ID 时，联动按精确项目名查回并核对目标，不重复创建。
+
+隔离靶场文件位于 `tests/scopesentry-lab/`，启动使用 `python3 tests/scopesentry-lab/manage.py up`：创建独立 internal 网络 `172.30.243.0/24` 并给现有扫描节点和运行中的 ARTEX 接入，不改变其原网络。靶场目标容器只读、无额外权限、无外网出口；另设固定目标的只读查看网关，宿主端口仅绑定回环，不能作为任意代理。若该网段与已有 Docker 网络冲突，脚本停止，不改网络。
+
+| 场景 | 宿主查看地址 | 容器扫描目标 |
+| --- | --- | --- |
+| HTTP 管理页（200） | `http://127.0.0.1:18381` | `172.30.243.11` |
+| HTTP 鉴权页（401） | `http://127.0.0.1:18382` | `172.30.243.12` |
+| 范围外跳转（302） | `http://127.0.0.1:18383` | `172.30.243.13` |
+| 自签名 HTTPS | `https://127.0.0.1:18384` | `172.30.243.14` |
+| 无监听端口阴性对照 | 不发布端口 | `172.30.243.15` |
+| 范围外金丝雀 | 不发布端口，不登记扫描授权 | `172.30.243.99` |
+| 青港书店订单访问控制 CTF | `http://127.0.0.1:18385`（只读页面查看） | `172.30.243.21` |
+
+`python3 tests/scopesentry-lab/run-live-tests.py` 使用真实 ScopeSentry MCP、Redis 队列和扫描节点，测试 ARTEX 检索、创建项目／扫描、轮询回流、去重、审批拒绝及暂停／完成边界。ARTEX 侧使用临时独立 PostgreSQL 数据库，不跑 LLM，不改现有任务；测试结束删除该测试数据库，保留靶场与远端测试扫描记录供检查。测试明确断言跳转不命中金丝雀、关闭端口不产生虚假服务，扫描完成但没有服务的目标不被标成需要自动重扫。停止靶场使用 `python3 tests/scopesentry-lab/manage.py down`，只移除本靶场容器与网络；若扫描容器重建，重新运行 `up` 接入靶场网络。自签名证书只用于测试，不要在浏览器安全警告页强行放行。
+
+配置场景模板后，增加 `--automatic-templates` 对另外三个可自动联动模板逐项创建真实扫描：固定目标 HTTP 指纹、单 IP Top1000 TCP／HTTP 清单、单 IP 服务与指纹。它们分别使用仅内部网络可达的 `.31`、`.32`、`.33`，检查远端完成、80 端口服务回流、来源、范围及金丝雀；`.32` 另提供 2222 端口的惰性 SSH banner（无认证、无 shell）用于核验非 HTTP 协议回流。不会执行 `manual` 模板或访问外部目标。
+
+自然任务验证使用独立的青港书店 CTF：模拟客户登录、订单列表和缺少订单归属校验的发票接口，所有账号、订单和 flag 均为靶场数据。`python3 tests/scopesentry-lab/natural-task.py launch` 经正常任务创建入口运行真实 LLM，输入不点名 ScopeSentry、不手动触发扫描、不替任务选择模板或开启自动补扫；结果以实际调用记录为准，不能把工具已发现算作已扫描。运行前执行靶场 `manage.py up` 给 ARTEX 接入网络，使 Bash／浏览器可达靶场；重建 ARTEX 后再次执行 `up`。`status` 查询状态，`stop` 仅暂停这次新建任务；任务 ID 保存在被 Git 忽略的 `tests/scopesentry-lab/local/natural-task.json`，脚本拒绝重复创建。该任务使用当前模型并产生实际模型费用，默认任务期限 600 秒；原有任务不修改。
+
+对照运行可增加 `--configured`：仅在正常任务配置入口选择有效模板并授权缺数据时自动补扫，仍不点名产品、不调用扫描接口。再加 `--default-template` 留空模板，验证授权后自动选择已核验的安全默认模板。`--target 172.30.243.22` 或 `172.30.243.23` 使用独立书店实例，`--run-tag <名称>` 分开保存各轮任务 ID，不覆盖旧记录；首次测绘后该实例已有存量数据，不再是缺数据对照。`verify` 使用相同的 `--configured`、`--run-tag` 只读观察任务完成、远端完成、带测绘字段的来源事实、真实扫描次数、Agent 读取完成状态、三项目标及 FLAG 证据，不刷新联动、不触发扫描或催促模型。超过验证期限只暂停本轮新任务。任务内联动使用 Engine 的实际启动状态，而不是只把数据库 `created` 当成未运行；未启动、暂停、排队和终态仍然不能提交扫描。Agent 运行时指引要求区分登记范围、实际测绘证据和漏洞证据，扫描中避免重复侦察，并行推进独立验证；取得 FLAG 不替代其他交付目标。
+
+### 场景化模板库
+
+`python3 deploy/scopesentry/configure-scenario-templates.py` 按 `deploy/scopesentry/templates/scenario-catalog.json` 幂等创建 13 个场景模板，覆盖 17 个已安装的节点插件；先检查完整插件身份和既有同名模板，再启用所需插件并创建缺失模板。`--dry-run` 只读预检，不改插件状态或模板；不启用服务端定时插件、不修改全局默认参数、不覆盖用户编辑，也不创建扫描。管理员密码仍通过前述方式提供。
+
+| 新模板名称 | 插件组合 | 使用入口 |
+| --- | --- | --- |
+| `ARTEX HTTP fingerprints (fixed targets)` | httpx + WebFingerprint | ARTEX 自动联动 |
+| `ARTEX IP TCP and HTTP inventory (top1000)` | SkipCdn + RustScan + fingerprintx + httpx | ARTEX 自动联动，仅明确单 IP |
+| `ARTEX IP services and fingerprints (top1000)` | SkipCdn + RustScan + fingerprintx + httpx + WebFingerprint | ARTEX 自动联动，仅明确单 IP |
+| `ARTEX Subdomains passive sources (manual)` | subfinder + Findomain | ScopeSentry 人工授权；会请求外部公开数据源 |
+| `ARTEX Subdomains DNS wordlist (manual)` | ksubdomain | ScopeSentry 人工授权；主动 DNS 枚举 |
+| `ARTEX Subdomains and takeover signals (manual)` | subfinder + Findomain + SubdomainTakeover | ScopeSentry 人工授权；仅检查接管信号，不注册资源 |
+| `ARTEX Web historical URLs (manual)` | httpx + wayback | ScopeSentry 人工授权；历史 URL 不代表当前有效 |
+| `ARTEX Web JS and API crawl (manual)` | httpx + katana | ScopeSentry 人工授权；深度 3、并发 3、非无头模式 |
+| `ARTEX Web browser crawl (manual)` | httpx + rad | ScopeSentry 人工授权；先检查表单操作与浏览器副作用 |
+| `ARTEX Web sensitive data (manual, no verify)` | httpx + katana + sensitive + trufflehog | ScopeSentry 人工授权；关闭凭据验证，不向第三方验证密钥 |
+| `ARTEX Web directory discovery (manual)` | httpx + SentryDir | ScopeSentry 人工授权；目录字典并发 3 |
+| `ARTEX Web backup discovery (manual)` | httpx + spray | ScopeSentry 人工授权；目录／备份枚举，与 SentryDir 二选一 |
+| `ARTEX Web JS monitoring baseline (manual)` | httpx + katana + PageMonitoring | ScopeSentry 人工授权；记录 JS 基线，不创建周期任务 |
+
+加上原有固定目标 HTTP 模板，ARTEX 自动联动有 4 个可用模板；其余 10 个场景模板只在 ScopeSentry 的人工授权流程中使用，不放宽任务内的固定目标／模板检查。PortScan 限 Top1000，不启用 masscan 全端口模板；HTTP 均显式关闭跟随跳转和扩展探测。FOFA／Quake／Hunter、需要专门数据源的企业／APK 插件、空 POC 库下的 nuclei、需要独立代理配置的 xray 不被批量启用。模板配置已读回核对，不代表所有新插件组合都完成了真实扫描验收。
+
+旧 `ARTEX IP TCP inventory (top1000)` 仅包含 RustScan，真实节点会找到端口，但该阶段只向后续流水线传递内存结果；仅追加 fingerprintx 的旧 `inventory and protocols` 也不保存识别出的 HTTP 服务。当前用新名称的 `TCP and HTTP inventory` 同时补上 fingerprintx 协议识别与 httpx 测绘／HTTP 结果存储。旧模板不删除、不覆盖，ARTEX 将缺少 HTTP 存储阶段的模板标为不可用，避免把“任务完成”误认为“资产已回流”。fingerprintx 是主动协议探测，部分协议实现可能试探认证；它不是安全默认模板的一部分，选择含该插件的模板前须核对授权与目标限制。
+
 ## 本机 Docker 与 skill／工具配置（2026-10-24）
 
 本机 Docker 已更新为当前工作区代码与运行依赖，应用、数据库均健康。13 个 skill 已按角色绑定：planner/mainagent 使用元决策与侦察参考，worker/pentest 可加载全部 9 类 chains、API 侦察、浏览器及本机工具指南，报告与验证角色使用相应精简配置。17 项已安装工具登记为 Bash 环境提示；受管会话、隧道、凭据和文件分发继续使用专用入口。

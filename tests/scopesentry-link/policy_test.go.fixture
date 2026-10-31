@@ -1,0 +1,145 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"strconv"
+	"testing"
+
+	"github.com/Autumn-27/artex/db"
+)
+
+func TestScopeSentryLinkScopeDeclarations(t *testing.T) {
+	for text, host := range map[string]string{
+		"仅允许对隔离靶机 http://172.30.243.22 进行测试（该靶机为独立本机隔离环境，无真实客户数据）": "172.30.243.22",
+		"仅允许对 http://172.30.243.22 进行测试":  "172.30.243.22",
+		"仅限对主机 192.0.2.10 进行安全测试。":        "192.0.2.10",
+		"测试范围为 https://api.example.test/": "api.example.test",
+		"范围限定为 `example.test`":            "example.test",
+		"授权范围为 2001:db8::1":               "2001:db8::1",
+	} {
+		got, ok := ssDeclaredHost(text)
+		if !ok || got != host {
+			t.Errorf("scope declaration=%q got=%q ok=%v", text, got, ok)
+		}
+	}
+	for _, text := range []string{
+		"仅允许对 http://192.0.2.10:8080 进行测试", "仅允许对 http://192.0.2.10/api/orders 进行测试",
+		"仅允许对 example.test 进行测试；禁止端口扫描", "仅允许对 example.test 进行测试（不允许高并发）",
+		"仅允许对 https://user:password@example.test 进行测试", "只允许被动侦察", "允许 httpx 但不扫端口",
+		"仅允许对 example.test 进行测试（该靶机为隔离环境，禁止 POST）", "授权范围为 192.0.2.0/24",
+		"授权范围为 example.test || evil.test", "授权范围为 https://example.test/?safe=yes", "测试目标为 *.example.test",
+	} {
+		if host, ok := ssDeclaredHost(text); ok {
+			t.Errorf("restricted/ambiguous declaration accepted: %q -> %s", text, host)
+		}
+	}
+}
+
+func TestScopeSentryLinkSubdomainArrayAndArchive(t *testing.T) {
+	fake := &ssFake{}
+	s, task := ssTestServer(t, fake)
+	targets := []ssTarget{{Host: "example.test", Children: true}}
+	id, err := ssImportAsset(s.m.assets, "subdomain", json.RawMessage(`{"host":"api.example.test","ip":["192.0.2.50"],"type":"A","value":["192.0.2.50"]}`), targets)
+	if err != nil || id == 0 {
+		t.Fatalf("valid subdomain array rejected: id=%d error=%v", id, err)
+	}
+	taskID, _ := strconv.ParseInt(task.ID, 10, 64)
+	link, _ := s.m.pg.ScopeSentryLink(taskID)
+	link.AutoScan = true
+	link.TemplateID = ssTestTemplate
+	link.ScanName = "archive-evidence"
+	link.ScanID = ssTestJob
+	if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.m.pg.SnapshotTaskArchive(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Data db.ScopeSentryLink `json:"data"`
+	}
+	if err := json.Unmarshal(snapshot.Tables["task_scopesentry_links"], &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Data.ScanID != ssTestJob || !rows[0].Data.AutoScan {
+		t.Fatal("Archive lost configuration/scan identity")
+	}
+}
+
+func TestScopeSentryLinkConstraintsNeverWidenScope(t *testing.T) {
+	targets := []ssTarget{{Host: "example.test", Children: true}, {Host: "192.0.2.10"}}
+	result, err := ssConstrainedTargets(targets, []db.Constraint{{Kind: "allow", Text: "仅允许对 api.example.test 进行测试"}})
+	if err != nil || len(result) != 1 || result[0].Host != "api.example.test" || result[0].Children {
+		t.Fatalf("narrowed=%v err=%v", result, err)
+	}
+	if ssInScope("deep.api.example.test", result) {
+		t.Fatal("exact declaration expanded subdomains")
+	}
+	for _, constraints := range [][]db.Constraint{
+		{{Kind: "deny", Text: "禁止端口扫描"}},
+		{{Kind: "allow", Text: "仅允许对 outside.test 进行测试"}},
+		{{Kind: "allow", Text: "仅允许对 api.example.test 进行测试"}, {Kind: "allow", Text: "仅允许对 192.0.2.10 进行测试"}},
+		{{Kind: "allow", Text: "仅允许对 example.test 进行测试"}, {Kind: "deny", Text: "禁止创建扫描"}},
+	} {
+		if _, err := ssConstrainedTargets(targets, constraints); err == nil {
+			t.Fatalf("constraint was ignored: %v", constraints)
+		}
+	}
+}
+
+func TestScopeSentryLinkDefaultTemplateAndPolicy(t *testing.T) {
+	for _, scenario := range []string{"approved", "no-opt-in", "no-default", "duplicate", "empty-template", "disabled-plugin", "path-limit", "deny-operation", "outside"} {
+		t.Run(scenario, func(t *testing.T) {
+			fake := &ssFake{defaultCatalog: true}
+			s, task := ssTestServer(t, fake)
+			id, _ := strconv.ParseInt(task.ID, 10, 64)
+			link, _ := s.m.pg.ScopeSentryLink(id)
+			link.AutoScan = scenario != "no-opt-in"
+			_ = s.m.pg.SaveScopeSentryLink(link)
+			text := "仅允许对 api.example.test 进行测试（该靶机为独立本机隔离环境，无真实客户数据）"
+			kind := "allow"
+			switch scenario {
+			case "no-default":
+				fake.defaultCatalog = false
+			case "duplicate":
+				fake.duplicateDefault = true
+			case "empty-template":
+				fake.badTemplate = true
+			case "disabled-plugin":
+				fake.pluginDisabled = true
+			case "path-limit":
+				text = "仅允许对 http://api.example.test/orders 进行测试"
+			case "deny-operation":
+				kind = "deny"
+				text = "禁止端口扫描"
+			case "outside":
+				text = "仅允许对 outside.test 进行测试"
+			}
+			if _, err := task.Store.AddConstraint(kind, text, "human"); err != nil {
+				t.Fatal(err)
+			}
+			result, err := s.runScopeSentry(context.Background(), task, "system", true, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "approved" {
+				if result.State != "scanning" || result.TemplateID != ssTestTemplate || fake.scans.Load() != 1 {
+					t.Fatalf("approved natural scope+default failed: %+v", result)
+				}
+				if fake.lastScan["target"] != "api.example.test" || fake.projectTarget != "api.example.test" {
+					t.Fatal("literal scope narrowing was ignored")
+				}
+			} else if fake.scans.Load() != 0 {
+				t.Fatalf("%s submitted a scan", scenario)
+			}
+			if scenario == "no-opt-in" && (result.TemplateID != "" || result.AutoScan) {
+				t.Fatal("Default selection granted scan authority")
+			}
+			if scenario == "outside" && fake.queries.Load() != 0 {
+				t.Fatal("conflicting scope queried remote assets")
+			}
+		})
+	}
+}

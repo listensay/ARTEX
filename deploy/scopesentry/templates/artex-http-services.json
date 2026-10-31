@@ -1,0 +1,11 @@
+{
+  "name": "ARTEX HTTP service mapping (fixed targets)",
+  "modules": {
+    "AssetMapping": ["3a0d994a12305cb15a5cb7104d819623"]
+  },
+  "parameters": {
+    "AssetMapping": {
+      "3a0d994a12305cb15a5cb7104d819623": "-cdncheck true -screenshot false -tlsprobe false -fr false -bh false -t 3"
+    }
+  }
+}

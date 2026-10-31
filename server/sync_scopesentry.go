@@ -55,6 +55,9 @@ func (s *Server) scopeSentryClient(ctx context.Context) (*mcphttp.Client, error)
 	if m.URL == "" {
 		return nil, fmt.Errorf("数据源 %s 未配置 URL，请先配置", scopeSentryMCPName)
 	}
+	if !m.Enabled {
+		return nil, fmt.Errorf("数据源 %s 已停用", scopeSentryMCPName)
+	}
 	return mcphttp.New(ctx, m.Name, m.URL, jsonStrMap(m.Env), m.Insecure)
 }
 

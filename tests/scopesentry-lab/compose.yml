@@ -1,0 +1,113 @@
+x-site: &site
+  image: python:3.12-slim-bookworm
+  command: [python3, /lab/site.py]
+  volumes:
+    - ./site.py:/lab/site.py:ro
+    - ./local/certs:/lab/certs:ro
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  labels:
+    artex.scopesentry-lab: "true"
+
+services:
+  bookshop:
+    <<: *site
+    command: [python3, /lab/bookshop.py]
+    volumes:
+      - ./bookshop.py:/lab/bookshop.py:ro
+    environment: {LAB_FLAG: "FLAG{blue_harbor_invoice_owner_missing}"}
+    networks:
+      lab: {ipv4_address: "172.30.243.21"}
+  bookshop-fresh:
+    <<: *site
+    command: [python3, /lab/bookshop.py]
+    volumes:
+      - ./bookshop.py:/lab/bookshop.py:ro
+    environment: {LAB_FLAG: "FLAG{blue_harbor_natural_fresh_order}"}
+    networks:
+      lab: {ipv4_address: "172.30.243.22"}
+  bookshop-evidence:
+    <<: *site
+    command: [python3, /lab/bookshop.py]
+    volumes:
+      - ./bookshop.py:/lab/bookshop.py:ro
+    environment: {LAB_FLAG: "FLAG{blue_harbor_natural_service_evidence}"}
+    networks:
+      lab: {ipv4_address: "172.30.243.23"}
+  portal:
+    <<: *site
+    environment: {LAB_MODE: portal}
+    networks:
+      lab: {ipv4_address: "172.30.243.11"}
+  http-fingerprints:
+    <<: *site
+    environment: {LAB_MODE: portal}
+    networks:
+      lab: {ipv4_address: "172.30.243.31"}
+  tcp-inventory:
+    <<: *site
+    environment: {LAB_MODE: inventory}
+    networks:
+      lab: {ipv4_address: "172.30.243.32"}
+  service-fingerprints:
+    <<: *site
+    environment: {LAB_MODE: portal}
+    networks:
+      lab: {ipv4_address: "172.30.243.33"}
+  auth:
+    <<: *site
+    environment: {LAB_MODE: auth}
+    networks:
+      lab: {ipv4_address: "172.30.243.12"}
+  redirect:
+    <<: *site
+    environment: {LAB_MODE: redirect, LAB_REDIRECT: "http://172.30.243.99/canary"}
+    networks:
+      lab: {ipv4_address: "172.30.243.13"}
+  tls:
+    <<: *site
+    environment: {LAB_MODE: tls}
+    networks:
+      lab: {ipv4_address: "172.30.243.14"}
+  closed:
+    image: python:3.12-slim-bookworm
+    command: [python3, -c, "import time; time.sleep(10**8)"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    labels: {artex.scopesentry-lab: "true"}
+    networks:
+      lab: {ipv4_address: "172.30.243.15"}
+  canary:
+    <<: *site
+    environment: {LAB_MODE: canary}
+    networks:
+      lab: {ipv4_address: "172.30.243.99"}
+  viewer:
+    <<: *site
+    command: [python3, /lab/viewer.py]
+    volumes:
+      - ./viewer.py:/lab/viewer.py:ro
+      - ./local/certs:/lab/certs:ro
+    ports:
+      - "127.0.0.1:18381:18381"
+      - "127.0.0.1:18382:18382"
+      - "127.0.0.1:18383:18383"
+      - "127.0.0.1:18384:18384"
+      - "127.0.0.1:18385:18385"
+    networks:
+      lab: {ipv4_address: "172.30.243.100"}
+      viewer: {}
+
+networks:
+  viewer: {}
+  lab:
+    name: artex-scopesentry-lab
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.243.0/24

@@ -9,12 +9,34 @@ description: 查询或复用 ScopeSentry 资产与扫描结果，管理项目、
 
 ## 按场景加载与操作
 
+### ARTEX 任务联动
+
+- 平台在运行任务的规划入口检索已登记的明确域名/单 IP 范围，回流范围内资产；扫描结果作为未独立验证的数据，不自动确认漏洞或扩大测试范围。
+- 先用 `scopesentry_status` 查看结果与跳过原因。执行角色可用 `refresh=true` 刷新；规划/报告/验证角色只读状态，不能借此启动批量侦察。
+- 补充测绘优先调用 `scopesentry_scan`，说明当前任务为何需要新扫描，并选用有效的端口/服务测绘模板。模板可留空：沿用任务已选模板，未选择时只在授权扫描路径查找并核验唯一的安全默认 HTTP 模板，不自动开启授权。平台固定 `targetSource=general`，不从项目或资产搜索隐式扩展目标。
+- 任务内不能用原始 MCP `create_scan_task` 绕过联动校验。自动模板只接受已核验的 httpx、WebFingerprint、SkipCdn、RustScan、fingerprintx 插件；httpx 必须显式使用 `-cdncheck true -screenshot false -tlsprobe false -fr false -bh false -t 3`，不能依赖会跟随跳转的默认参数。其他插件只接受已核验的默认参数；自定义插件或其他覆盖参数需由操作员另行安排，不由任务自动执行。
+- 端口扫描／端口指纹模板只用于明确登记的单 IP；域名使用 HTTP 服务测绘模板，避免把域名解析后的共享／CDN IP 当作全端口授权。模板引用的插件必须已启用，否则只显示原因，不提交扫描。
+- 「任务总览 → ScopeSentry 联动」可开关存量联动、选择模板、授权缺数据时自动补扫，或显式发起一次扫描。新扫描默认不自动授权；已有角色解绑、skill/MCP 关闭仍然有效。
+- 平台跟踪远端扫描标识并持续回流，重启不重复提交。整句、仅声明登记主机范围的允许约束可自动核验并收窄目标，不扩大授权；禁止操作、路径/端口/速率限制及其他无法核验的约束仍阻止新扫描，不忽略或删除约束。文字范围与登记范围冲突时也不检索存量资产。目标不明确、模板未配置有效模块/含扩域或漏洞流水线、无在线节点时会明确停止或跳过；不要绕过这些限制。审批后再次核验模板、插件与任务授权，变化则停止。
+- 有正在运行的扫描时不重复扫描同一目标，可并行做独立的 Web 逻辑验证；任务要求服务测绘交付时，等待 `scopesentry_status` 确认完成并引用回流资产中的 URL、状态码、标题与来源证据。登记了主机不等于已经测绘，取得 FLAG 也不替代其他尚未完成的目标；回流资产不是已确认漏洞。
+- 回流事实包含远端测绘字段快照和本地资产锚点；资产后来被 Agent／用户重新登记时，列表来源标签可能更新，原 ScopeSentry 事实仍保留。追溯来源要读该事实，不能仅看最新标签，也不能把不同来源的观察当作两次独立漏洞验证。
+- 任务完成、暂停或删除后不发起新扫描。已提交的远端扫描不会因 ARTEX 暂停自动终止；需要终止远端扫描时由操作员在 ScopeSentry 管理页面处理。
+
 - 查询既有资产、扫描结果或项目/任务/模板/节点状态，或需要按授权创建扫描时，首次调用 ScopeSentry MCP 前加载本 skill；不要求用户在意图中写出 ScopeSentry 名称。
 - 资产侦察需要扫描数据时，先按当前授权目标查询已有记录，评估时效与覆盖，再决定是否需要新扫描。使用已有数据不等于数据已验证，记录来源与局限。
 - Auto 处理用户指定的平台操作；mainagent 复用现有任务与结果，避免重复扫描；worker/pentest 仅执行当前任务或意图的步骤。
 - verifier/retester 仅查询本次单个漏洞关联的既有记录，不启动全面侦察、批量扫描或额外阶段。
 - ARTEX 本地任务和本地资产查询使用对应本地工具。没有 ScopeSentry MCP 连接或绑定时说明限制，不能伪造结果或改用 HTTP 绕过绑定。
 - 同一会话已加载且流程仍适用时无需重复加载；技能提供操作流程，不自动创建项目、模板或扫描任务。
+
+### 场景模板选择
+
+当前目录提供 13 个 `ARTEX` 场景模板，历史不完整模板保留而不覆盖。不要为覆盖插件数量而使用整个流水线：已有数据先复用，同一目标的相似枚举模板二选一。根据 `list_scan_templates` 取得 ID 后调用 `get_scan_template` 核对实际模块和参数；模板列表的空模块只是投影，不代表实际模板为空。
+
+- ARTEX 任务内可选择 `ARTEX HTTP fingerprints (fixed targets)`、`ARTEX IP TCP and HTTP inventory (top1000)`、`ARTEX IP services and fingerprints (top1000)`，以及原固定目标 HTTP 模板。含端口扫描的两项只对明确登记的单 IP 使用。仅 RustScan 或 RustScan＋fingerprintx 的旧清单模板缺少 HTTP 结果存储阶段，保留但不用于 ARTEX 联动；不要把节点日志中发现端口等同于资产已保存。fingerprintx 是主动协议探测，部分协议可能试探认证，不属于安全默认模板；选择它前核对授权，相关禁止约束不能跳过。
+- 名称带 `manual` 的子域名、接管信号、历史 URL、JS/API 爬取、浏览器爬取、敏感信息、目录／备份枚举及 JS 基线模板，仅供 ScopeSentry 人工授权流程；不能用它们绕过任务内 `scopesentry_scan` 的模板限制。
+- `sensitive data` 模板关闭 trufflehog 凭据验证。`monitoring baseline` 只写 JS 基线，不自动创建周期任务；rad 可能产生表单等应用副作用，先核对授权与行为。katana 使用根域爬取范围，不能假设与单个主机授权等价。
+- 模板定义和参数在 `deploy/scopesentry/templates/scenario-catalog.json`；`python3 deploy/scopesentry/configure-scenario-templates.py --dry-run` 可只读检查。模板存在不代表该目标适合执行，也不代表所有组合已经通过真实扫描验收。
 
 独立或外部部署时，到 ARTEX「系统配置 → MCP」配置名为 `ScopeSentry` 的服务器：HTTP 传输、实际 `/mcp` URL，以及 `X-API-Key` 请求头；保存后刷新工具列表并绑定所需 Agent。没有服务地址时保持停用。
 

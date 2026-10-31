@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import {
+  ChevronDownIcon,
   Loader2Icon,
   PlugZapIcon,
   PlusIcon,
@@ -18,6 +19,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -26,6 +28,7 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useLLMModels } from "@/hooks/use-llm-models";
 import { api } from "@/lib/api";
 import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -331,9 +334,30 @@ function ProfileSheet({
   const [retry, setRetry] = React.useState<LLMRetryOverride>(ZERO_OVERRIDE); // 本配置的重试覆盖;全 0=跟随全局
   const [testing, setTesting] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
-  const [models, setModels] = React.useState<string[]>([]);
-  const [loadingModels, setLoadingModels] = React.useState(false);
   const [modelsOpen, setModelsOpen] = React.useState(false);
+  const modelList = useLLMModels({
+    open,
+    format,
+    baseUrl,
+    apiKey,
+    proxy,
+    profileId: profile ? Number(profile.id) : undefined,
+    hasStoredKey: Boolean(keyHint),
+  });
+  const loadingModels = modelList.status === "loading";
+  let modelStatusText = "填写 Base URL 或 API Key 后自动获取模型，也可手动输入。";
+  if (modelList.invalidUrl) {
+    modelStatusText = "请填写有效的 http:// 或 https:// 地址；也可手动输入模型。";
+  } else if (loadingModels) {
+    modelStatusText = "正在获取模型列表…";
+  } else if (modelList.status === "error") {
+    modelStatusText = `获取失败：${modelList.error}。请检查地址、API Key 或代理后重试，也可手动输入。`;
+  } else if (modelList.status === "success") {
+    modelStatusText =
+      modelList.models.length > 0
+        ? `已获取 ${modelList.models.length} 个模型，点击「选择模型」搜索，也可手动输入。`
+        : "接口未返回可用模型，可刷新重试或手动输入。";
+  }
 
   // 每次打开时从传入的 profile 灌一遍表单（新建则重置为默认值）。抽屉关掉再打开
   // 就是一次干净的开始，不会留下上一个配置的残影。
@@ -358,31 +382,10 @@ function ProfileSheet({
     setRetry(profile?.retry ?? ZERO_OVERRIDE);
     setApiKey("");
     setKeyHint(profile?.api_key_hint ?? "");
-    setModels([]);
     setModelsOpen(false);
   }, [open, profile]);
 
   const profileId = profile ? Number(profile.id) : undefined;
-
-  async function loadModels() {
-    if (loadingModels) return;
-    setLoadingModels(true);
-    setModels([]);
-    try {
-      const r = await api.fetchLLMModels(format, baseUrl, apiKey, proxy, profileId);
-      if (r.ok && r.models && r.models.length > 0) {
-        setModels(r.models);
-        setModelsOpen(true);
-        toast.success(`已加载 ${r.models.length} 个模型`);
-      } else {
-        toast.error(`加载模型失败：${r.error ?? "未获取到模型"}`);
-      }
-    } catch (e) {
-      toast.error(`加载模型出错：${(e as Error).message}`);
-    } finally {
-      setLoadingModels(false);
-    }
-  }
 
   async function testConnection() {
     if (testing) return;
@@ -461,7 +464,7 @@ function ProfileSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex flex-col gap-0 p-0 data-[side=right]:min-w-[420px] data-[side=right]:sm:max-w-xl"
+        className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-xl"
       >
         <SheetHeader className="px-4">
           <SheetTitle className="flex items-center gap-2">
@@ -506,53 +509,6 @@ function ProfileSheet({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="p-model">模型</Label>
-            <div className="flex gap-2">
-              <Input
-                id="p-model"
-                className="font-mono"
-                placeholder="claude-opus-4-8"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-              />
-              {/* modal: 这个 Popover 的内容被 portal 到 <body>，在 Sheet 的滚动锁之外，
-                  不加 modal 时列表能渲染却滚不动。modal 让它自己持有最上层滚动锁。 */}
-              <Popover open={modelsOpen} onOpenChange={setModelsOpen} modal>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="shrink-0"
-                    disabled={loadingModels}
-                    onClick={loadModels}
-                    title="从 API 加载可用模型"
-                  >
-                    {loadingModels ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
-                  </Button>
-                </PopoverTrigger>
-                {models.length > 0 && (
-                  <PopoverContent className="max-h-72 w-72 gap-0 overflow-y-auto overscroll-contain p-1" align="end">
-                    {models.map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        className="w-full shrink-0 rounded-md px-2 py-1.5 text-left font-mono text-xs hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => {
-                          setModel(m);
-                          setModelsOpen(false);
-                        }}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </PopoverContent>
-                )}
-              </Popover>
-            </div>
-          </div>
-
-          <div className="grid gap-2">
             <Label htmlFor="p-base-url">Base URL（可选）</Label>
             <Input
               id="p-base-url"
@@ -561,6 +517,90 @@ function ProfileSheet({
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
             />
+            <p className="text-muted-foreground text-xs">填写后自动获取模型列表；留空使用所选格式的官方地址。</p>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="p-api-key">API Key</Label>
+            <Input
+              id="p-api-key"
+              type="password"
+              placeholder={keyHint ? `已设置（${keyHint}），留空保持不变` : "sk-…"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+          </div>
+
+          <div className="grid min-w-0 gap-2">
+            <Label htmlFor="p-model">模型</Label>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                id="p-model"
+                className="min-w-0 flex-1 basis-40 font-mono"
+                placeholder="claude-opus-4-8"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                aria-describedby="p-model-status"
+              />
+              {/* modal: 这个 Popover 的内容被 portal 到 <body>，在 Sheet 的滚动锁之外，
+                  不加 modal 时列表能渲染却滚不动。modal 让它自己持有最上层滚动锁。 */}
+              <Popover open={modelsOpen && modelList.models.length > 0} onOpenChange={setModelsOpen} modal>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={loadingModels || modelList.models.length === 0}
+                  >
+                    选择模型
+                    <ChevronDownIcon />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[min(24rem,calc(100vw-2rem))] gap-0 p-0" align="end">
+                  <Command>
+                    <CommandInput placeholder="搜索模型…" aria-label="搜索模型" />
+                    <CommandList className="overscroll-contain" aria-label="可用模型">
+                      <CommandEmpty>没有匹配的模型，可关闭列表后手动输入。</CommandEmpty>
+                      {modelList.models.map((m) => (
+                        <CommandItem
+                          key={m}
+                          value={m}
+                          data-checked={model === m}
+                          onSelect={() => {
+                            setModel(m);
+                            setModelsOpen(false);
+                          }}
+                        >
+                          <span className="min-w-0 break-all font-mono text-xs">{m}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                disabled={loadingModels || !modelList.canLoad}
+                onClick={modelList.refresh}
+                aria-label="刷新模型列表"
+                title="刷新模型列表"
+              >
+                {loadingModels ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
+              </Button>
+            </div>
+            <p
+              id="p-model-status"
+              aria-live="polite"
+              className={cn(
+                "wrap-anywhere text-xs",
+                modelList.status === "error" ? "text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {modelStatusText}
+            </p>
           </div>
 
           <div className="grid gap-2">
@@ -592,17 +632,6 @@ function ProfileSheet({
               conv-12、worker 如 exp3-worker-i87）。用于按 session-id 头做提示缓存 /
               粘性路由的网关；同一会话多轮稳定、不同会话互不相同。留空则不发送。
             </p>
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="p-api-key">API Key</Label>
-            <Input
-              id="p-api-key"
-              type="password"
-              placeholder={keyHint ? `已设置（${keyHint}），留空保持不变` : "sk-…"}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3">

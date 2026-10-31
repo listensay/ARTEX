@@ -185,6 +185,8 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 	b.WriteString("\n\n【本次触发本轮的实际变动（先看这里，再决定是否补方向）】：")
 	for _, ev := range evs {
 		switch ev.Kind {
+		case "scopesentry":
+			b.WriteString("\n- 【ScopeSentry 任务联动】" + ev.Detail + "。先复用已回流的本地资产；扫描中不要重复派同目标的批量侦察，可以并行推进独立的 Web 逻辑验证。缺少范围/模板/权限时给出具体补齐或跳过理由，不要把缺数据说成已扫描或把登记范围说成已完成测绘。已授权的补扫由平台自动选择安全默认 HTTP 模板；确需不同扫描时由已绑定执行角色使用 scopesentry_scan，遵守任务约束与审批，规划者不直接扫描。任务要求服务测绘产出时，应在 scopesentry_status 确认完成并引用回流资产后再判该项达成，不把 FLAG 达成替代其他未完成目标。")
 		case "goal":
 			if len(ev.Goals) == 1 {
 				b.WriteString(fmt.Sprintf("\n- 人（主 agent）新增了一个目标：%s —— 新的待达成目标，请据此补充探索方向（若尚无对应意图）。", ev.Goals[0]))

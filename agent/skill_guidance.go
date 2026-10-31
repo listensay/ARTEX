@@ -49,6 +49,7 @@ func SkillLoadingGuidance(agentKey string, names, toolNames []string) string {
 				add("scopesentry", "需要查询本次单个漏洞关联的已有资产/扫描记录时，在首次调用 ScopeSentry MCP 前加载；用户无需点名产品。仅用于补充既有证据，不启动扫描或其他新阶段。")
 			} else {
 				add("scopesentry", "需要查询或复用 ScopeSentry 已有资产/扫描结果、查看项目/任务/模板/节点，或按任务授权创建扫描时，在首次调用 ScopeSentry MCP 前加载；用户无需点名产品。资产侦察需要已有扫描数据时先查对应目标的记录，再判断是否需要新扫描；ARTEX 本地任务和资产仍使用本地工具。")
+				b.WriteString("任务内侦察先查看 scopesentry_status：平台按登记范围检索并回流存量资产；有在跑扫描时不要重复本地扫描，同步推进独立验证并等待回流。需要服务测绘产出时必须引用实际回流或测绘证据，不能把登记了目标当作已测绘。已授权自动补扫时平台会选安全默认 HTTP 模板；执行者 scopesentry_scan 的模板可留空，用于确需一次补扫的任务意图，仍需任务权限和审批。若不可用，记录明确跳过原因，再选择本地侦察；不能仅搜索工具说明就声称平台已经执行。\n")
 			}
 		} else {
 			add("scopesentry", "当前没有可调用的 ScopeSentry MCP 工具；需要该平台时可加载指南说明缺少的连接/绑定，不能声称已查询或已启动扫描，也不能绕过 MCP 绑定。")

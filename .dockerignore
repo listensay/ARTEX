@@ -24,3 +24,8 @@ bench/seed_v2.sh
 .secrets/
 gate.token
 gate.key
+
+# Generated lab certificates, browser captures and Python bytecode are not build inputs.
+tests/scopesentry-lab/local/
+**/__pycache__/
+**/.playwright-cli/

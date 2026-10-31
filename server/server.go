@@ -129,9 +129,10 @@ type Server struct {
 
 	// Cold task archives run through one persistent FIFO worker. The buffered wake
 	// channel coalesces enqueue bursts; the database remains the source of truth.
-	archiveWake chan struct{}
-	archiveWG   sync.WaitGroup
-	side        *sideQuestionState
+	archiveWake      chan struct{}
+	archiveWG        sync.WaitGroup
+	side             *sideQuestionState
+	scopeSentryLocks sync.Map // task id -> *sync.Mutex; serializes recon, polling and configuration
 }
 
 // provEntry is a cached provider + its config for one LLM profile id.
@@ -167,6 +168,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
 	s.bootstrapScopeSentry()
+	s.engine.prepareScopeSentry = s.prepareScopeSentry
 	if m.pg != nil {
 		if err := m.pg.SeedScopeSentrySkillBindings(); err != nil {
 			log.Printf("[skills] ScopeSentry guide binding seed failed: %v", err)
@@ -272,6 +274,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		s.seedCredentialTools()
 		s.seedTunnelTools()
 		s.seedStageShareTool()
+		s.seedScopeSentryLinkTools()
 		s.seedOrchestrationTools() // P2 跨任务编排工具 seed 进 tools 表(可按 agent 绑定)
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
@@ -289,6 +292,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		// Fill the tool cache for any enabled MCP that has none yet (notably the
 		// seeded browser MCP on first run). Async so it never blocks startup.
 		s.startBackground(s.discoverEmptyMCPsOnStartup)
+		s.startBackground(s.pollScopeSentryLinks)
 		logSink.SetDB(ctx, m.pg) // restore last 100 log rows and enable async persistence
 	}
 	// precedence: persisted DB config > env.
@@ -942,7 +946,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sync/scopesentry/datasource", s.syncSSDatasource)
 	mux.HandleFunc("GET /api/sync/scopesentry/projects", s.syncSSProjects)
 	mux.HandleFunc("GET /api/sync/scopesentry/tasks", s.syncSSTasks)
+	mux.HandleFunc("GET /api/sync/scopesentry/templates", s.scopeSentryTemplates)
 	mux.HandleFunc("POST /api/sync/scopesentry/sync", s.syncSSRun)
+	mux.HandleFunc("GET /api/tasks/{id}/scopesentry", s.taskScopeSentryGet)
+	mux.HandleFunc("POST /api/tasks/{id}/scopesentry", s.taskScopeSentryAction)
 	// Skill CRUD (文件系统)
 	mux.HandleFunc("GET /api/skills", s.fsListSkills)
 	mux.HandleFunc("POST /api/skills", s.fsCreateSkill)

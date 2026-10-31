@@ -1,0 +1,140 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"strconv"
+	"testing"
+	"time"
+)
+
+func TestScopeSentryLiveAutomaticTemplates(t *testing.T) {
+	s := ssLiveLabServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 13*time.Minute)
+	defer cancel()
+	cl, err := s.scopeSentryClient(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	text, err := cl.Call(ctx, "list_scan_templates", map[string]any{"pageIndex": 1, "pageSize": 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		List []struct{ ID, Name string }
+	}
+	if err := json.Unmarshal([]byte(text), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	canary := ssLiveMetrics(t, "172.30.243.99")
+	for _, scenario := range []struct {
+		name, host string
+		http       bool
+	}{
+		{"ARTEX HTTP fingerprints (fixed targets)", "172.30.243.31", true},
+		{"ARTEX IP TCP and HTTP inventory (top1000)", "172.30.243.32", true},
+		{"ARTEX IP services and fingerprints (top1000)", "172.30.243.33", true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			id := ""
+			for _, item := range catalog.List {
+				if item.Name == scenario.name {
+					if id != "" {
+						t.Fatal("Duplicate deployed template name")
+					}
+					id = item.ID
+				}
+			}
+			if id == "" {
+				t.Fatal("Configure the scenario templates before this live test")
+			}
+			before := ssLiveMetrics(t, scenario.host)
+			task := ssLiveLabTask(t, s, scenario.name, []string{scenario.host}, false)
+			link, err := s.m.pg.ScopeSentryLink(mustLabID(task.ID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			link.TemplateID = id
+			if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+				t.Fatal(err)
+			}
+			link, err = s.runScopeSentry(ctx, task, "system", true, true)
+			if err != nil || link.State != "scanning" {
+				t.Fatalf("Template did not submit: %+v error=%v", link, err)
+			}
+			t.Logf("Real scan: %s id=%s", link.ScanName, link.ScanID)
+			deadline := time.Now().Add(4 * time.Minute)
+			for time.Now().Before(deadline) && ctx.Err() == nil {
+				time.Sleep(5 * time.Second)
+				link, err = s.runScopeSentry(ctx, task, "system", true, false)
+				if err != nil || link.State == "failed" || link.State == "blocked" {
+					t.Fatalf("Template failed: %+v error=%v", link, err)
+				}
+				if link.ScanState == "completed" && link.Imported > 0 {
+					break
+				}
+			}
+			if link.ScanState != "completed" || link.Imported == 0 {
+				t.Fatalf("No completed scan with measured service: %+v", link)
+			}
+			assets, err := s.m.assets.QueryByTask(mustLabID(task.ID), "", 100, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			measured := false
+			ssh := false
+			for _, asset := range assets {
+				if asset.Type != "service" {
+					continue
+				}
+				if asset.Domain != scenario.host {
+					t.Fatalf("Template imported another host: %+v", asset)
+				}
+				if asset.Port != nil && *asset.Port == 80 {
+					measured = true
+					if scenario.http && (asset.URL == "" || asset.StatusCode == nil || *asset.StatusCode != 200 || asset.PageTitle == "") {
+						t.Fatalf("HTTP template lost service evidence: %+v", asset)
+					}
+				}
+				if asset.Port != nil && *asset.Port == 2222 && asset.ServiceName == "ssh" {
+					ssh = true
+				}
+				port := 0
+				if asset.Port != nil {
+					port = *asset.Port
+				}
+				t.Logf("Imported service: host=%s port=%d protocol=%s url=%s", asset.Domain, port, asset.ServiceName, asset.URL)
+			}
+			if !measured {
+				t.Fatal("Expected open TCP port 80 was not imported")
+			}
+			if scenario.host == "172.30.243.32" && (!ssh || ssLiveMetrics(t, scenario.host)["tcp:2222"] <= before["tcp:2222"]) {
+				t.Fatal("Protocol stage did not probe and persist the inert SSH banner")
+			}
+			if scenario.http && ssLiveMetrics(t, scenario.host)["/"] <= before["/"] {
+				t.Fatal("HTTP template did not perform a fresh probe")
+			}
+			var creations, scopes, sources int
+			if err := s.m.pg.QueryRow(`SELECT
+			(SELECT count(*) FROM tool_usage WHERE task_id=$1 AND tool_key='mcp__ScopeSentry__create_scan_task'),
+			(SELECT count(*) FROM task_scope WHERE task_id=$1),
+			(SELECT count(*) FROM task_asset_links WHERE task_id=$1 AND source_summary LIKE 'ScopeSentry%')`, mustLabID(task.ID)).Scan(&creations, &scopes, &sources); err != nil {
+				t.Fatal(err)
+			}
+			if creations != 1 || scopes != 1 || sources == 0 {
+				t.Fatalf("Invalid scan/provenance/scope counts: %d/%d/%d", creations, sources, scopes)
+			}
+		})
+	}
+	for route, count := range ssLiveMetrics(t, "172.30.243.99") {
+		if count != canary[route] {
+			t.Fatalf("Automatic templates reached the out-of-scope canary: %s", route)
+		}
+	}
+}
+
+func mustLabID(value string) int64 {
+	id, _ := strconv.ParseInt(value, 10, 64)
+	return id
+}

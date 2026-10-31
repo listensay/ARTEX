@@ -177,6 +177,33 @@ func roeMessage(out []string, rules []ScopeRule) string {
 // roeHosts returns the interaction targets of a tool call: ExtractHosts over
 // the shell surface for Bash 类工具,URL host for WebFetch。
 func roeHosts(toolName string, input []byte, cmd string) []string {
+	if toolName == "ExecuteExtraTool" {
+		var call struct {
+			ToolName string          `json:"tool_name"`
+			Params   json.RawMessage `json:"params"`
+		}
+		if json.Unmarshal(input, &call) == nil && call.ToolName != "ExecuteExtraTool" {
+			return roeHosts(call.ToolName, call.Params, "")
+		}
+	}
+	if toolName == "mcp__ScopeSentry__create_scan_task" || toolName == "mcp__ScopeSentry__create_project" {
+		var call struct {
+			Target string `json:"target"`
+		}
+		if json.Unmarshal(input, &call) == nil {
+			var hosts []string
+			for _, target := range strings.FieldsFunc(call.Target, func(r rune) bool { return r == '\n' || r == '\r' || r == ',' }) {
+				target = strings.TrimSpace(target)
+				if u, err := url.Parse(target); err == nil && u.Hostname() != "" {
+					target = u.Hostname()
+				}
+				if target != "" {
+					hosts = append(hosts, target)
+				}
+			}
+			return hosts
+		}
+	}
 	if cmd != "" {
 		return ExtractHosts(cmd)
 	}

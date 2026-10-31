@@ -1755,3 +1755,19 @@ export interface PendingScopeRow {
   decided_at?: string;
 }
 export interface StageEntry {token:string;name:string;url:string;size:number;expires_at:string;one_shot:boolean;task_id?:string;hits:number;}
+export type ScopeSentryLink = {
+  task_id: number;
+  enabled: boolean;
+  auto_scan: boolean;
+  template_id: string;
+  state: string;
+  summary: string;
+  targets: string[];
+  missing_targets: string[];
+  checked_at: number;
+  imported: number;
+  project_id: string;
+  scan_id: string;
+  scan_name: string;
+  scan_state: string;
+};

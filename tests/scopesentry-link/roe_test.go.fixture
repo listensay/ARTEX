@@ -1,0 +1,34 @@
+package guard
+
+import (
+	"context"
+	"reflect"
+	"testing"
+)
+
+func TestScopeSentryLinkRoETargets(t *testing.T) {
+	for _, name := range []string{"mcp__ScopeSentry__create_scan_task", "mcp__ScopeSentry__create_project"} {
+		got := roeHosts(name, []byte(`{"target":"api.example.test\nhttps://example.test/a,192.0.2.10"}`), "")
+		if !reflect.DeepEqual(got, []string{"api.example.test", "example.test", "192.0.2.10"}) {
+			t.Fatalf("%s hosts=%v", name, got)
+		}
+	}
+	got := roeHosts("ExecuteExtraTool", []byte(`{"tool_name":"mcp__ScopeSentry__create_scan_task","params":{"target":"outside.test"}}`), "")
+	if !reflect.DeepEqual(got, []string{"outside.test"}) {
+		t.Fatal("deferred wrapper hid the real target")
+	}
+}
+
+func TestScopeSentryLinkRawScanCannotBypass(t *testing.T) {
+	g := New()
+	g.SetRoE(RoEConfig{TaskIDOf: func(context.Context) int64 { return 1 }})
+	for _, name := range []string{"mcp__ScopeSentry__create_scan_task", "ExecuteExtraTool"} {
+		input := []byte(`{"tool_name":"mcp__ScopeSentry__create_scan_task","target":"example.test","params":{"targetSource":"project","project":["unreviewed"]}}`)
+		if blocked, _, _ := g.Hooks().PreToolUse(context.Background(), name, input); !blocked {
+			t.Fatal("raw task scan bypassed bridge")
+		}
+		if blocked, _, _ := g.Hooks().PreToolUse(WithScopeSentryBridge(context.Background()), name, input); blocked {
+			t.Fatal("validated bridge was unexpectedly blocked")
+		}
+	}
+}

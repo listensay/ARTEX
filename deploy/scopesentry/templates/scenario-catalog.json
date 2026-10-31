@@ -1,0 +1,36 @@
+{
+  "plugins": {
+    "httpx": {"hash": "3a0d994a12305cb15a5cb7104d819623", "name": "httpx", "module": "AssetMapping", "parameter": "-cdncheck true -screenshot false -tlsprobe false -fr false -bh false -t 3"},
+    "webfingerprint": {"hash": "80718cc3fcb4827d942e6300184707e2", "name": "WebFingerprint", "module": "AssetHandle", "parameter": ""},
+    "skipcdn": {"hash": "9b91e0f18ac9043ec9fe250a39b4a2d9", "name": "SkipCdn", "module": "PortScanPreparation", "parameter": ""},
+    "rustscan": {"hash": "66b4ddeb983387df2b7ee7726653874d", "name": "RustScan", "module": "PortScan", "parameter": "-port {port.top1000} -b 500 -t 5000"},
+    "fingerprintx": {"hash": "648a6f49eed57b1737ac702e02985b00", "name": "fingerprintx", "module": "PortFingerprint", "parameter": ""},
+    "subfinder": {"hash": "d60ba73c70aac430a0a54e796e7e19b8", "name": "subfinder", "module": "SubdomainScan", "parameter": "-t 5 -timeout 20 -max-time 3"},
+    "findomain": {"hash": "9cef0742c1e8c81459a015d4fb4168ad", "name": "Findomain", "module": "SubdomainScan", "parameter": "-et 20"},
+    "ksubdomain": {"hash": "e8f55f5e0e9f4af1ca40eb19048b8c82", "name": "ksubdomain", "module": "SubdomainScan", "parameter": "-subfile {dict.subdomain.default} -et 30"},
+    "takeover": {"hash": "c0c71c101271f38b8be1767f3626d291", "name": "SubdomainTakeover", "module": "SubdomainSecurity", "parameter": ""},
+    "wayback": {"hash": "ef244b3462744dad3040f9dcf3194eb1", "name": "wayback", "module": "URLScan", "parameter": ""},
+    "katana": {"hash": "9669d0dcc52a5ca6dbbe580ffc99c364", "name": "katana", "module": "URLScan", "parameter": "-t 3 -timeout 5 -depth 3 -et 3 -p 2 -hl false -xhr false -pc false -rs 3"},
+    "rad": {"hash": "4b292861d3228af0e4da8e7ef979497c", "name": "rad", "module": "WebCrawler", "parameter": "-et 5"},
+    "sensitive": {"hash": "2949994c04a4e124b9c98383489510f0", "name": "sensitive", "module": "URLSecurity", "parameter": "-pdf false"},
+    "trufflehog": {"hash": "1aa212b9578dc3fb1409ee8de8ed005e", "name": "trufflehog", "module": "URLSecurity", "parameter": "-pdf false -verify false -thread 3"},
+    "sentrydir": {"hash": "920546788addc6d29ea63e4a314a1b85", "name": "SentryDir", "module": "DirScan", "parameter": "-d {dict.dir.default} -t 3"},
+    "spray": {"hash": "bf2c67e39e559c648843ebd0c881b724", "name": "spray", "module": "DirScan", "parameter": "-et 5 -finger true -common true -bak true -d {dict.dir.default}"},
+    "monitoring": {"hash": "e52b8b16d49912ca564c22319c495403", "name": "PageMonitoring", "module": "URLSecurity", "parameter": "-type js"}
+  },
+  "templates": [
+    {"name": "ARTEX HTTP fingerprints (fixed targets)", "mode": "automatic", "target": "http", "plugins": ["httpx", "webfingerprint"], "purpose": "HTTP service discovery and built-in product fingerprints; no crawling."},
+    {"name": "ARTEX IP TCP and HTTP inventory (top1000)", "mode": "automatic", "target": "ip", "plugins": ["skipcdn", "rustscan", "fingerprintx", "httpx"], "purpose": "Common TCP ports, protocol identification and HTTP storage for individually authorized IPs; not all ports. HTTP mapping is required to persist recognized HTTP services."},
+    {"name": "ARTEX IP services and fingerprints (top1000)", "mode": "automatic", "target": "ip", "plugins": ["skipcdn", "rustscan", "fingerprintx", "httpx", "webfingerprint"], "purpose": "TCP inventory, protocol identification and HTTP fingerprints for explicit IPs."},
+    {"name": "ARTEX Subdomains passive sources (manual)", "mode": "manual", "target": "root_domain", "plugins": ["subfinder", "findomain"], "purpose": "Gather names from public sources; external data requests and expanded names need authorization."},
+    {"name": "ARTEX Subdomains DNS wordlist (manual)", "mode": "manual", "target": "root_domain", "plugins": ["ksubdomain"], "purpose": "Active DNS wordlist enumeration; authorize the whole domain and DNS request volume."},
+    {"name": "ARTEX Subdomains and takeover signals (manual)", "mode": "manual", "target": "root_domain", "plugins": ["subfinder", "findomain", "takeover"], "purpose": "Collect subdomains and inspect takeover signals; does not claim accounts or register resources."},
+    {"name": "ARTEX Web historical URLs (manual)", "mode": "manual", "target": "http", "plugins": ["httpx", "wayback"], "purpose": "Find historical URLs from public archives; history does not prove current exposure."},
+    {"name": "ARTEX Web JS and API crawl (manual)", "mode": "manual", "target": "http", "plugins": ["httpx", "katana"], "purpose": "Bounded-depth JS and URL collection; the crawler's domain scope is broader than a single host."},
+    {"name": "ARTEX Web browser crawl (manual)", "mode": "manual", "target": "http", "plugins": ["httpx", "rad"], "purpose": "Browser-driven request collection; review form submission and application side effects first."},
+    {"name": "ARTEX Web sensitive data (manual, no verify)", "mode": "manual", "target": "http", "plugins": ["httpx", "katana", "sensitive", "trufflehog"], "purpose": "Inspect crawled response bodies for sensitive data; credential verification is explicitly disabled."},
+    {"name": "ARTEX Web directory discovery (manual)", "mode": "manual", "target": "http", "plugins": ["httpx", "sentrydir"], "purpose": "Low-concurrency directory wordlist checks; intrusive enumeration requires separate approval."},
+    {"name": "ARTEX Web backup discovery (manual)", "mode": "manual", "target": "http", "plugins": ["httpx", "spray"], "purpose": "Time-bounded directory and backup-name checks; an alternative to SentryDir, not a duplicate pipeline."},
+    {"name": "ARTEX Web JS monitoring baseline (manual)", "mode": "manual", "target": "http", "plugins": ["httpx", "katana", "monitoring"], "purpose": "Record JS-body baselines from crawled URLs; this template does not create a recurring job."}
+  ]
+}

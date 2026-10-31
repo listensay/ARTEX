@@ -1,0 +1,48 @@
+package db
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestScopeSentryLinkArchiveSnapshotAssetRemap(t *testing.T) {
+	tables := map[string]json.RawMessage{
+		"exploration_nodes": json.RawMessage(`[
+		{"origin":"scopesentry","payload":{"asset_ids":[10],"assets":[{"asset_id":10,"id":"remote-object-id","url":"http://example.test","status":200,"title":"Snapshot"},{"asset_id":20}]}},
+		{"origin":"manual","payload":{"assets":[{"asset_id":10}]}}
+		]`),
+		"exploration_anchors": json.RawMessage(`[{"node_id":1,"asset_id":10}]`),
+		"task_asset_links":    json.RawMessage(`[{"task_id":1,"asset_id":10}]`),
+		"findings":            json.RawMessage(`[]`),
+	}
+	out, err := remapArchiveAssetReferences(tables, map[int64]int64{10: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := decodeArchiveRows(out["exploration_nodes"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := rows[0]["payload"].(map[string]any)
+	observations := payload["assets"].([]any)
+	first := observations[0].(map[string]any)
+	if id, _ := jsonInt64(first["asset_id"]); id != 100 || first["id"] != "remote-object-id" || first["title"] != "Snapshot" {
+		t.Fatalf("Lost/remapped remote observation incorrectly: %+v", first)
+	}
+	if id, _ := jsonInt64(observations[1].(map[string]any)["asset_id"]); id != 20 {
+		t.Fatal("Unmapped historical asset changed")
+	}
+	manual := rows[1]["payload"].(map[string]any)["assets"].([]any)[0].(map[string]any)
+	if id, _ := jsonInt64(manual["asset_id"]); id != 10 {
+		t.Fatal("Unrelated user payload changed")
+	}
+	for _, table := range []string{"exploration_anchors", "task_asset_links"} {
+		rows, err := decodeArchiveRows(out[table])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id, _ := jsonInt64(rows[0]["asset_id"]); id != 100 {
+			t.Fatal("Snapshot and live anchor disagree")
+		}
+	}
+}

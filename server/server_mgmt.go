@@ -1998,18 +1998,26 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	// Resolve API key: form input > profile stored key.
 	apiKey := strings.TrimSpace(req.APIKey)
-	if apiKey == "" && req.ProfileID != nil {
+	if apiKey == "" && req.ProfileID != nil && s.m != nil && s.m.pg != nil {
 		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
 			apiKey = p.APIKey
 		}
 	}
-	if apiKey == "" {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": "未提供 API Key"})
-		return
-	}
-
 	baseURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
 	provider := strings.TrimSpace(req.Provider)
+	if baseURL == "" {
+		if provider == "openai" || provider == "openai-responses" {
+			baseURL = "https://api.openai.com/v1"
+		} else {
+			baseURL = "https://api.anthropic.com"
+		}
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") || base.User != nil {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": "Base URL 必须是有效的 HTTP/HTTPS 地址，且不能包含账号密码"})
+		return
+	}
+	base.Fragment = ""
 
 	// Candidate endpoints to try in order. Some Anthropic-compatible providers
 	// (e.g. DeepSeek) implement /v1/messages under an /anthropic path but expose
@@ -2021,48 +2029,66 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	bearerHdr := func() http.Header {
 		h := http.Header{}
-		h.Set("Authorization", "Bearer "+apiKey)
+		if apiKey != "" {
+			h.Set("Authorization", "Bearer "+apiKey)
+		}
 		return h
 	}
 	anthropicHdr := func() http.Header {
 		h := http.Header{}
-		h.Set("x-api-key", apiKey)
+		if apiKey != "" {
+			h.Set("x-api-key", apiKey)
+		}
 		h.Set("anthropic-version", "2023-06-01")
 		return h
 	}
 
 	var candidates []candidate
+	addCandidate := func(endpoint string, hdr http.Header) {
+		u := *base
+		u.Path = endpoint
+		u.RawPath = ""
+		for _, c := range candidates {
+			if c.url == u.String() && c.hdr.Get("Authorization") == hdr.Get("Authorization") && c.hdr.Get("anthropic-version") == hdr.Get("anthropic-version") {
+				return
+			}
+		}
+		candidates = append(candidates, candidate{u.String(), hdr})
+	}
+	b := strings.TrimRight(base.Path, "/")
 	switch provider {
 	case "openai", "openai-responses":
-		// Responses API shares the OpenAI model list at /v1/models; tolerate a full
-		// endpoint URL of either format.
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
+		// Accept a root, versioned prefix, or full OpenAI endpoint without doubling /v1.
+		for _, suffix := range []string{"/chat/completions", "/responses", "/models"} {
+			b = strings.TrimSuffix(b, suffix)
 		}
-		b := strings.TrimRight(strings.TrimSuffix(strings.TrimSuffix(baseURL, "/chat/completions"), "/responses"), "/")
-		candidates = append(candidates, candidate{b + "/models", bearerHdr()})
+		addCandidate(b+"/models", bearerHdr())
+		if !strings.HasSuffix(b, "/v1") {
+			addCandidate(b+"/v1/models", bearerHdr())
+		}
 	default: // anthropic
-		if baseURL == "" {
-			baseURL = "https://api.anthropic.com"
-		}
-		b := strings.TrimRight(strings.TrimSuffix(baseURL, "/v1/messages"), "/")
-		candidates = append(candidates, candidate{b + "/v1/models", anthropicHdr()})
-		// Fallback for Anthropic-compatible third parties whose model list lives on
-		// the OpenAI path: strip a trailing /anthropic and try the OpenAI endpoint.
-		if root := strings.TrimRight(strings.TrimSuffix(b, "/anthropic"), "/"); root != b {
-			candidates = append(candidates,
-				candidate{root + "/models", bearerHdr()},
-				candidate{root + "/v1/models", bearerHdr()},
-			)
-		}
+		b = strings.TrimSuffix(strings.TrimSuffix(b, "/messages"), "/models")
+		root := strings.TrimSuffix(b, "/v1")
+		addCandidate(root+"/v1/models", anthropicHdr())
+		// Compatible gateways may expose only a Bearer-authenticated OpenAI list,
+		// whether their messages endpoint uses an /anthropic prefix or not.
+		root = strings.TrimSuffix(root, "/anthropic")
+		addCandidate(root+"/models", bearerHdr())
+		addCandidate(root+"/v1/models", bearerHdr())
 	}
 
-	// Build HTTP client with optional proxy.
+	// One deadline covers all fallbacks, including providers that never respond.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	transport := &http.Transport{}
+	defer transport.CloseIdleConnections()
 	if p := strings.TrimSpace(req.Proxy); p != "" {
-		if pu, err := url.Parse(p); err == nil {
-			transport.Proxy = http.ProxyURL(pu)
+		pu, err := url.Parse(p)
+		if err != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https" && pu.Scheme != "socks5" && pu.Scheme != "socks5h") {
+			writeJSON(w, 200, map[string]any{"ok": false, "error": "代理必须是有效的 HTTP/HTTPS/SOCKS5 地址"})
+			return
 		}
+		transport.Proxy = http.ProxyURL(pu)
 	}
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
 
@@ -2070,7 +2096,11 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	var lastErr string
 	emptyOK := false
 	for _, c := range candidates {
-		httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, c.url, nil)
+		if ctx.Err() != nil {
+			lastErr = "请求已取消或超时"
+			break
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
 		if err != nil {
 			lastErr = "构建请求失败: " + err.Error()
 			continue
@@ -2081,8 +2111,12 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 			lastErr = "请求失败: " + err.Error()
 			continue
 		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
+		if readErr != nil {
+			lastErr = "读取响应失败: " + readErr.Error()
+			continue
+		}
 		if resp.StatusCode != http.StatusOK {
 			lastErr = fmt.Sprintf("API 返回 %d: %s", resp.StatusCode, string(body[:min(len(body), 512)]))
 			continue
@@ -2098,9 +2132,11 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		models := make([]string, 0, len(parsed.Data))
+		seen := make(map[string]bool, len(parsed.Data))
 		for _, m := range parsed.Data {
-			if m.ID != "" {
-				models = append(models, m.ID)
+			if id := strings.TrimSpace(m.ID); id != "" && !seen[id] {
+				models = append(models, id)
+				seen[id] = true
 			}
 		}
 		if len(models) > 0 {
