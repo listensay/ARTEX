@@ -20,7 +20,7 @@ async (page) => {
     if (path === "/api/tasks/99") response = task;
     if (path === "/api/stats") response = { ...response, active_task: task, engine_mode: "exploring", asset_counts: {}, tokens: {} };
     if (["/api/exploration/intents", "/api/exploration/findings", "/api/exploration/frontier"].includes(path)) response = [];
-    if (path === "/api/sync/scopesentry/templates") response = { templates: [{ id: templateId, name: "HTTP 服务测绘", usable: true, default: defaultAvailable, reason: "" }, { id: "222222222222222222222222", name: "default", usable: false, reason: "模板未配置模块" }] };
+    if (path === "/api/sync/scopesentry/templates") response = { templates: [{ id: templateId, name: "HTTP 服务测绘", usable: true, automatic: true, default: defaultAvailable, reason: "" }, { id: "444444444444444444444444", name: "目录扫描", usable: true, automatic: false, reason: "" }, { id: "222222222222222222222222", name: "default", usable: false, reason: "模板未配置模块" }] };
     if (path === "/api/tasks/99/scopesentry") {
       if (request.method() === "POST") {
         const args = request.postDataJSON();
@@ -39,9 +39,9 @@ async (page) => {
   const area = page.locator('[aria-labelledby="scopesentry-link-title"]');
   await area.getByText("未找到存量数据，可以选择模板后补充测绘").waitFor();
   if (!(await page.getByRole("button", { name: "发起一次测绘", exact: true }).isDisabled())) throw new Error("Scan allowed without a template");
-  await page.getByLabel("端口／服务测绘模板", { exact: true }).selectOption(templateId);
+  await page.getByLabel("扫描模板", { exact: true }).selectOption(templateId);
   await page.waitForFunction((id) => document.querySelector("#scopesentry-link-template")?.value === id, templateId);
-  await page.getByLabel("授权缺少存量数据时自动补扫", { exact: true }).click();
+  await page.getByLabel("授权数据缺失、过期或覆盖不足时自动补扫", { exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#scopesentry-link-auto-scan")?.getAttribute("aria-checked") === "true");
   if (!lastConfig?.auto_scan || lastConfig.template_id !== templateId) throw new Error("Authorization/configuration was not preserved");
   await page.getByRole("button", { name: "检索并回流", exact: true }).click();
@@ -60,10 +60,18 @@ async (page) => {
   await page.getByRole("tab", { name: "总览", exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#scopesentry-link-template option[value=""]')?.textContent === "安全默认 · HTTP 服务测绘");
   await page.getByText("尚未授权自动扫描", { exact: true }).waitFor();
-  if (scans !== 1 || await page.getByLabel("授权缺少存量数据时自动补扫", { exact: true }).isChecked()) throw new Error("Default selection silently authorized a scan");
-  await page.getByLabel("授权缺少存量数据时自动补扫", { exact: true }).click();
+  if (scans !== 1 || await page.getByLabel("授权数据缺失、过期或覆盖不足时自动补扫", { exact: true }).isChecked()) throw new Error("Default selection silently authorized a scan");
+  await page.getByLabel("授权数据缺失、过期或覆盖不足时自动补扫", { exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#scopesentry-link-auto-scan")?.getAttribute("aria-checked") === "true");
   if (!lastConfig?.auto_scan || lastConfig.template_id !== "" || scans !== 1) throw new Error("Blank-template opt-in issued a manual scan or lost configuration");
+  await page.getByLabel("存量数据覆盖要求", { exact: true }).selectOption("services");
+  await page.waitForFunction(() => document.querySelector("#scopesentry-link-coverage")?.value === "services");
+  if (lastConfig?.coverage_mode !== "services") throw new Error("Coverage selection was not saved");
+  await page.getByLabel("扫描模板", { exact: true }).selectOption("444444444444444444444444");
+  await page.waitForFunction(() => document.querySelector("#scopesentry-link-template")?.value === "444444444444444444444444");
+  const explicitSwitch = page.getByLabel("所选模板需要显式发起，不执行自动补扫", { exact: true });
+  if (!(await explicitSwitch.isDisabled()) || await explicitSwitch.isChecked()) throw new Error("Explicit template kept automatic scan authority");
+  if (await page.getByRole("button", { name: "发起一次测绘", exact: true }).isDisabled()) throw new Error("Vetted explicit template was not restored");
   await area.scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${dir}/desktop.png` });
   await page.setViewportSize({ width: 390, height: 844 });

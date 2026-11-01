@@ -95,7 +95,9 @@ func anchorFindingTx(tx *sql.Tx, in RecordFindingInput) ([]int64, error) {
 			target = u
 		}
 	}
-	rows, err := tx.Query(`SELECT id,type,url,method FROM assets WHERE $1=ANY(task_ids) AND type IN ('endpoint','service')`, in.TaskID)
+	// Services have no HTTP method; non-HTTP services may also have no URL.
+	// Missing metadata must not abort finding persistence or imply a match.
+	rows, err := tx.Query(`SELECT id,type,COALESCE(url,''),COALESCE(method,'') FROM assets WHERE $1=ANY(task_ids) AND type IN ('endpoint','service')`, in.TaskID)
 	if err != nil {
 		return nil, err
 	}

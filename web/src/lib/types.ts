@@ -1770,4 +1770,9 @@ export type ScopeSentryLink = {
   scan_id: string;
   scan_name: string;
   scan_state: string;
+  coverage_mode?: "" | "http" | "services" | "subdomains" | "urls";
+  template_coverage?: string;
+  max_age_seconds?: number;
+  required_ports?: number[];
+  required_urls?: string[];
 };

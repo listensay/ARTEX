@@ -133,6 +133,9 @@ type Server struct {
 	archiveWG        sync.WaitGroup
 	side             *sideQuestionState
 	scopeSentryLocks sync.Map // task id -> *sync.Mutex; serializes recon, polling and configuration
+	scopeSentryJobs  sync.Map // task id -> *scopeSentryJob; nonblocking refresh admission
+	scopeSentryInit  sync.Once
+	scopeSentrySlots chan struct{}
 }
 
 // provEntry is a cached provider + its config for one LLM profile id.
@@ -168,7 +171,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
 	s.bootstrapScopeSentry()
-	s.engine.prepareScopeSentry = s.prepareScopeSentry
+	s.engine.queueScopeSentry = s.queueScopeSentry
 	if m.pg != nil {
 		if err := m.pg.SeedScopeSentrySkillBindings(); err != nil {
 			log.Printf("[skills] ScopeSentry guide binding seed failed: %v", err)

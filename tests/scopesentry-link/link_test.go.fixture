@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
@@ -39,6 +40,8 @@ type ssFake struct {
 	lastScan         map[string]any
 	defaultCatalog   bool
 	duplicateDefault bool
+	onAssets         func(context.Context)
+	templateOverride map[string]any
 }
 
 func (f *ssFake) serve(w http.ResponseWriter, r *http.Request) {
@@ -66,10 +69,13 @@ func (f *ssFake) serve(w http.ResponseWriter, r *http.Request) {
 		value := any(map[string]any{})
 		switch request.Params.Name {
 		case "list_assets":
+			if f.onAssets != nil {
+				f.onAssets(r.Context())
+			}
 			f.queries.Add(1)
 			items := []any{}
 			if f.assets.Load() && request.Params.Arguments["asset_type"] == "asset" {
-				items = []any{map[string]any{"id": "555555555555555555555555", "url": "https://api.example.test/login", "domain": "api.example.test", "port": "443", "service": "http", "status": 200, "title": "Fixture Login"},
+				items = []any{map[string]any{"id": "555555555555555555555555", "url": "https://api.example.test/login", "domain": "api.example.test", "port": "443", "service": "http", "status": 200, "title": "Fixture Login", "last_seen": time.Now().Unix()},
 					map[string]any{"url": "https://evil-example.test/", "domain": "evil-example.test", "port": "443"},
 					map[string]any{"url": "file:///etc/passwd", "domain": "api.example.test"}}
 			}
@@ -82,6 +88,9 @@ func (f *ssFake) serve(w http.ResponseWriter, r *http.Request) {
 				"Parameters": map[string]any{"AssetMapping": map[string]string{"3a0d994a12305cb15a5cb7104d819623": scopeSentryHTTPParameters}}}
 			if f.badTemplate {
 				value = map[string]any{"name": "default", "AssetMapping": nil}
+			}
+			if f.templateOverride != nil {
+				value = f.templateOverride
 			}
 		case "list_scan_templates":
 			name := "HTTP mapping"
@@ -96,7 +105,7 @@ func (f *ssFake) serve(w http.ResponseWriter, r *http.Request) {
 		case "list_nodes":
 			value = map[string]any{"list": []any{map[string]any{"name": "node-1", "state": "1"}}}
 		case "list_plugins":
-			value = map[string]any{"list": []any{map[string]any{"module": "AssetMapping", "hash": "3a0d994a12305cb15a5cb7104d819623", "status": !f.pluginDisabled, "name": "httpx"}}}
+			value = map[string]any{"list": []any{map[string]any{"module": "AssetMapping", "hash": "3a0d994a12305cb15a5cb7104d819623", "status": !f.pluginDisabled, "name": "httpx"}, map[string]any{"module": "DirScan", "hash": "920546788addc6d29ea63e4a314a1b85", "status": !f.pluginDisabled, "name": "SentryDir"}}}
 		case "create_project":
 			f.projects.Add(1)
 			f.projectName, _ = request.Params.Arguments["name"].(string)
@@ -431,7 +440,7 @@ func TestScopeSentryLinkFailureAndBoundaries(t *testing.T) {
 			case "plugins-disabled":
 				fake.pluginDisabled = true
 			case "constraint":
-				_, _ = s.m.pg.Exec(`INSERT INTO task_constraints(exploration_id,kind,text) VALUES($1,'deny','禁止端口扫描')`, task.ExpID)
+				_, _ = s.m.pg.Exec(`INSERT INTO task_constraints(exploration_id,kind,text) VALUES($1,'deny','禁止创建扫描')`, task.ExpID)
 			case "changed-scope":
 				fake.onTemplate = func() { _, _ = s.m.assets.AddAgentScope(id, "subdomain", "other.test", "new authorization", "manual") }
 			case "guard-deny":

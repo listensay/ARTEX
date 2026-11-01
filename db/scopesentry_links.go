@@ -26,6 +26,12 @@ type ScopeSentryLink struct {
 	ScanScopeHash    string   `json:"scan_scope_hash"`
 	ScanState        string   `json:"scan_state"`
 	ScanStartedAt    int64    `json:"scan_started_at"`
+	ScanRequestHash  string   `json:"scan_request_hash,omitempty"`
+	CoverageMode     string   `json:"coverage_mode,omitempty"`
+	TemplateCoverage string   `json:"template_coverage,omitempty"`
+	MaxAgeSeconds    int64    `json:"max_age_seconds,omitempty"`
+	RequiredPorts    []int    `json:"required_ports,omitempty"`
+	RequiredURLs     []string `json:"required_urls,omitempty"`
 }
 
 func (d *DB) ScopeSentryLink(taskID int64) (ScopeSentryLink, error) {

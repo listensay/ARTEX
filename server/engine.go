@@ -157,8 +157,8 @@ type Engine struct {
 	resolveAuthoritative bool
 	// readiness reports whether a global LLM provider is configured — the signal behind
 	// Ready()/the llm_configured indicator. Wired once at startup; nil → not ready.
-	readiness          func() bool
-	prepareScopeSentry func(context.Context, *Task) string
+	readiness        func() bool
+	queueScopeSentry func(*Task)
 }
 
 type taskRuntime struct {
@@ -932,10 +932,8 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		// what fired this round (worker done / finding; may be several — debounce
 		// coalesces a burst; empty for time/heartbeat wakes).
 		triggers := t.drainTriggers()
-		if e.prepareScopeSentry != nil {
-			if detail := e.prepareScopeSentry(ectx, t); detail != "" {
-				triggers = append(triggers, agent.TriggerEvent{Kind: "scopesentry", Detail: detail})
-			}
+		if e.queueScopeSentry != nil {
+			e.queueScopeSentry(t)
 		}
 		if ectx.Err() != nil || e.IsDeleting(t.ID) {
 			return
@@ -1086,8 +1084,8 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		label:  label,
 	}
 	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)
-	if e.prepareScopeSentry != nil {
-		e.prepareScopeSentry(workCtx, t)
+	if e.queueScopeSentry != nil {
+		e.queueScopeSentry(t)
 	}
 	e.BeginLLMCall(t.ID)
 	var reason harness.TerminalReason

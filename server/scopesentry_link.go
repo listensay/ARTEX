@@ -162,14 +162,6 @@ func (s *Server) ssCall(ctx context.Context, t *Task, cl ssCaller, name string, 
 	return text, err
 }
 
-func (s *Server) prepareScopeSentry(ctx context.Context, t *Task) string {
-	link, err := s.runScopeSentry(ctx, t, "system", false, false)
-	if err != nil {
-		return "联动状态读取失败：" + preview(err.Error(), 200)
-	}
-	return link.Summary
-}
-
 func (s *Server) runScopeSentry(ctx context.Context, t *Task, actor string, force, scan bool) (db.ScopeSentryLink, error) {
 	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
 	lock := s.ssLock(t.ID)
@@ -185,16 +177,16 @@ func (s *Server) runScopeSentry(ctx context.Context, t *Task, actor string, forc
 		return link, fmt.Errorf("任务正在删除或服务正在关闭")
 	}
 	defer s.engine.decInflight(t.ID)
-	previousSummary := link.Summary
+	previousSummary, previousState := link.Summary, link.State
 	finish := func(state, summary string) (db.ScopeSentryLink, error) {
 		link.State, link.Summary, link.CheckedAt = state, summary, time.Now().Unix()
 		if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
 			return link, err
 		}
-		if previousSummary != summary {
+		if previousSummary != summary || previousState != state {
 			s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: "text", Summary: "ScopeSentry 联动：" + summary})
-			if actor == "poll" || actor == "user" {
-				t.Notify()
+			if link.Enabled && (state == "scanning" || link.Imported > 0 || previousState == "scanning") {
+				t.notifyScopeSentry(summary)
 			}
 		}
 		return link, nil
@@ -253,7 +245,15 @@ func (s *Server) runScopeSentry(ctx context.Context, t *Task, actor string, forc
 		return finish("failed", "ScopeSentry 连接失败："+preview(err.Error(), 250))
 	}
 	defer cl.Close()
-	imported, missing, partial, err := s.ssImport(ctx, t, cl, targets)
+	if link.TemplateID != "" && link.TemplateCoverage == "" {
+		if text, err := s.ssCall(ctx, t, cl, "get_scan_template", map[string]any{"id": link.TemplateID}); err == nil {
+			link.TemplateCoverage = ssTemplateCoverage(text)
+		}
+	}
+	if err := ssValidateCoverage(&link, targets); err != nil {
+		return finish("blocked", err.Error())
+	}
+	imported, missing, partial, err := s.ssImport(ctx, t, cl, targets, link)
 	if err != nil {
 		if link.ScanName != "" && link.ScanState != "completed" && link.ScanState != "failed" {
 			return finish("scanning", "回流暂时失败，保留远端扫描标识并继续跟踪："+preview(err.Error(), 200))
@@ -276,13 +276,13 @@ func (s *Server) runScopeSentry(ctx context.Context, t *Task, actor string, forc
 	if partial {
 		return finish("ready", fmt.Sprintf("已回流 %d 个资产，达到 %d 条保护上限，覆盖不完整；请缩小查询范围", imported, scopeSentryImportLimit))
 	}
-	if link.ScanState == "failed" && !scan {
+	if link.ScanState == "failed" && !scan && ssSameScan(link) {
 		return finish("failed", "远端扫描失败；已有资产已回流，不自动重复提交")
 	}
 	if link.ProjectScopeHash != "" && link.ProjectScopeHash != hash {
 		link.ProjectID, link.ProjectName, link.ProjectScopeHash = "", "", ""
 	}
-	if scan || (link.AutoScan && len(missing) > 0 && link.ScanScopeHash != hash) {
+	if scan || (link.AutoScan && len(missing) > 0 && !ssSameScan(link)) {
 		if policyErr != nil {
 			return finish("blocked", policyErr.Error())
 		}
@@ -290,26 +290,26 @@ func (s *Server) runScopeSentry(ctx context.Context, t *Task, actor string, forc
 		defer stop()
 		return s.ssSubmitScan(scanCtx, t, cl, &link, actor, scan, finish)
 	}
-	if link.ScanState == "completed" && link.ScanScopeHash == hash {
-		return finish("imported", fmt.Sprintf("本范围测绘已完成，已回流 %d 个资产，%d 个目标未返回可用服务；不代表目标安全，不自动重扫", imported, len(missing)))
+	if link.ScanState == "completed" && ssSameScan(link) {
+		return finish("imported", fmt.Sprintf("本次远端扫描已完成，已回流 %d 个资产，%d 个目标仍缺少足够新且满足覆盖要求的数据；不代表目标安全，可继续本地侦察，不自动重扫", imported, len(missing)))
 	}
 	if imported > 0 {
 		if len(missing) > 0 {
 			return finish("ready", fmt.Sprintf("已回流 %d 个资产，另有 %d 个目标无存量数据；可按授权补扫，存量数据未经独立验证", imported, len(missing)))
 		}
-		return finish("imported", fmt.Sprintf("已复用并关联 %d 个 ScopeSentry 存量资产；来源未独立验证，不据此直接确认漏洞", imported))
+		return finish("imported", fmt.Sprintf("已关联 %d 个资产，满足当前 %s 数据要求；不代表端口/接口/漏洞均已测试，来源未独立验证", imported, ssCoverageMode(link)))
 	}
 	return finish("ready", "未找到范围内存量资产；可选择有效模板并授权新扫描，或说明为何使用本地侦察")
 }
 
-func (s *Server) ssImport(ctx context.Context, t *Task, cl ssCaller, targets []ssTarget) (imported int, missing []string, partial bool, err error) {
+func (s *Server) ssImport(ctx context.Context, t *Task, cl ssCaller, targets []ssTarget, link db.ScopeSentryLink) (imported int, missing []string, partial bool, err error) {
 	seen := map[int64]bool{}
-	covered := map[string]bool{}
+	coverage := ssCoverage{link: link, ports: map[string]map[int]bool{}, urls: map[string]bool{}, http: map[string]bool{}}
 	evidence := []map[string]any{}
 	defer func() {
 		missing = []string{}
 		for _, target := range targets {
-			if !covered[target.Host] {
+			if !coverage.covered(target.Host) {
 				missing = append(missing, target.Host)
 			}
 		}
@@ -334,7 +334,11 @@ func (s *Server) ssImport(ctx context.Context, t *Task, cl ssCaller, targets []s
 					if err != nil {
 						return len(seen), nil, false, err
 					}
-					if id == 0 || seen[id] {
+					if id == 0 {
+						continue
+					}
+					coverage.observe(typ, raw, targets)
+					if seen[id] {
 						continue
 					}
 					// Associate only the validated row, not derived DNS/IP assets or new scope rules.
@@ -355,6 +359,7 @@ AND (source_summary='' OR source_summary='任务执行期间自动关联' OR sou
 						var source map[string]json.RawMessage
 						_ = json.Unmarshal(raw, &source)
 						snapshot := map[string]any{"asset_id": id, "asset_type": typ}
+						snapshot["observed_at"] = ssObservationTime(source)
 						for _, key := range []string{"id", "host", "domain", "ip", "url", "port", "service", "status", "title", "products"} {
 							var value any
 							if data := source[key]; len(data) > 0 && json.Unmarshal(data, &value) == nil {
@@ -362,28 +367,6 @@ AND (source_summary='' OR source_summary='任务执行期间自动关联' OR sou
 							}
 						}
 						evidence = append(evidence, snapshot)
-					}
-					var source struct {
-						Host, Domain, URL string
-						IP                json.RawMessage
-					}
-					_ = json.Unmarshal(raw, &source)
-					host := source.Host
-					if host == "" {
-						host = source.Domain
-					}
-					if source.URL != "" {
-						if u, err := url.Parse(source.URL); err == nil {
-							host = u.Hostname()
-						}
-					}
-					if host == "" {
-						_ = json.Unmarshal(source.IP, &host)
-					}
-					for _, candidate := range targets {
-						if typ == "asset" && ssInScope(host, []ssTarget{candidate}) {
-							covered[candidate.Host] = true
-						}
 					}
 					if len(seen) >= scopeSentryImportLimit {
 						return len(seen), nil, true, nil
@@ -413,7 +396,7 @@ AND (source_summary='' OR source_summary='任务执行期间自动关联' OR sou
 			_, err := t.Store.AddNode(db.KindFact, map[string]any{
 				"summary":    fmt.Sprintf("ScopeSentry 回流 %d 个范围内资产", len(seen)),
 				"detail":     "已关联到本任务测试资产。来源为 ScopeSentry，未经独立验证；不作为漏洞确认或扩大授权的依据。",
-				"confidence": "observed", "observed_at": time.Now().Unix(), "assets": evidence}, 0, "confirmed", "scopesentry", ids)
+				"confidence": "observed", "imported_at": time.Now().Unix(), "assets": evidence}, 0, "confirmed", "scopesentry", ids)
 			if err != nil {
 				return len(seen), nil, false, err
 			}
@@ -557,12 +540,6 @@ func ssValidateTemplate(text string) error {
 
 func (s *Server) ssSubmitScan(ctx context.Context, t *Task, cl ssCaller, link *db.ScopeSentryLink, actor string, manual bool,
 	finish func(string, string) (db.ScopeSentryLink, error)) (db.ScopeSentryLink, error) {
-	if link.ScanScopeHash == link.ScopeHash && link.ScanName != "" {
-		if link.ScanState == "failed" {
-			return finish("failed", "此前远端扫描失败；请先核对远端状态，不重复创建同名扫描")
-		}
-		return finish("imported", "本范围已提交过一次测绘，复用已有结果，不重复创建远端同名任务")
-	}
 	lifecycle := t.lifecycleSnapshot()
 	if !scopeSentryTaskRunning(lifecycle, s.engine.Started(t.ID)) || lifecycle.Paused || lifecycle.Queued || s.engine.IsPaused(t.ID) || s.engine.isSettling(t.ID) || t.Guard == nil {
 		return finish("blocked", "只有正在运行且具备任务 Guard 的任务可以创建新扫描；不会复活已完成任务")
@@ -584,12 +561,41 @@ func (s *Server) ssSubmitScan(ctx context.Context, t *Task, cl ssCaller, link *d
 	if len(link.TemplateID) != 24 {
 		return finish("ready", "模板 ID 无效，请选择有效测绘模板")
 	}
+	if _, err := hex.DecodeString(link.TemplateID); err != nil {
+		return finish("blocked", "模板 ID 无效")
+	}
 	text, err := s.ssCall(ctx, t, cl, "get_scan_template", map[string]any{"id": link.TemplateID})
 	if err != nil {
 		return finish("failed", "模板读取失败："+preview(err.Error(), 200))
 	}
-	if err := ssValidateTemplate(text); err != nil {
+	rows, err := s.m.assets.ListTaskScope(link.TaskID)
+	if err != nil {
+		return finish("blocked", "任务范围不可读取")
+	}
+	targets, err := ssTargets(rows)
+	if err != nil {
 		return finish("blocked", err.Error())
+	}
+	constraints, err := t.Store.ListConstraints()
+	if err != nil {
+		return finish("blocked", "任务约束不可读取")
+	}
+	targets, err = ssConstrainedTargets(targets, constraints)
+	if err != nil {
+		return finish("blocked", err.Error())
+	}
+	if err := ssValidateTaskTemplate(text, targets, manual); err != nil {
+		return finish("blocked", err.Error())
+	}
+	if err := ssCheckOperationConstraints(text, constraints); err != nil {
+		return finish("blocked", err.Error())
+	}
+	link.TemplateCoverage = ssTemplateCoverage(text)
+	if ssSameScan(*link) {
+		if link.ScanState == "failed" {
+			return finish("failed", "相同扫描请求此前失败，请核对远端；不重复提交")
+		}
+		return finish("imported", "相同模板与覆盖要求已提交过扫描；可继续本地验证，不重复提交")
 	}
 	templateText := text
 	scanTargets := link.MissingTargets
@@ -642,7 +648,8 @@ func (s *Server) ssSubmitScan(ctx context.Context, t *Task, cl ssCaller, link *d
 	ctx = agent.WithRunInfo(ctx, agent.RunInfo{TaskID: link.TaskID, ExplorationID: t.ExpID, AgentKey: actor})
 	ctx = guard.WithScopeSentryBridge(ctx)
 	ctx = intercept.WithTaskContext(ctx, t.ID, "system", func(r db.Activity) { s.engine.emitActivity(t, r) })
-	name := fmt.Sprintf("artex-%s-%s", t.ID, link.ScopeHash[:12])
+	requestHash := ssScanKey(*link)
+	name := fmt.Sprintf("artex-%s-%s", t.ID, requestHash[:12])
 	params := map[string]any{"name": name, "target": strings.Join(scanTargets, "\n"), "targetSource": "general",
 		"node": []string{node}, "template": link.TemplateID, "scheduledTasks": false, "allNode": false}
 	if link.ProjectID == "" {
@@ -660,10 +667,10 @@ func (s *Server) ssSubmitScan(ctx context.Context, t *Task, cl ssCaller, link *d
 		if blocked, reason, updated := t.Guard.Hooks().PreToolUse(ctx, mcphttp.ToolName(scopeSentryMCPName, "create_project"), ssJSON(projectParams)); blocked || len(updated) > 0 {
 			return finish("blocked", "项目创建被管控阻止："+reason)
 		}
-		if err := s.ssValidateCurrent(t, link.ScopeHash, actor); err != nil {
+		if err := s.ssValidateCurrent(t, link.ScopeHash, actor, templateText); err != nil {
 			return finish("blocked", err.Error())
 		}
-		if err := s.ssCheckTemplateUnchanged(ctx, t, cl, link.TemplateID, templateText); err != nil {
+		if err := s.ssCheckTemplateUnchanged(ctx, t, cl, link.TemplateID, templateText, targets, manual); err != nil {
 			return finish("blocked", err.Error())
 		}
 		link.ProjectName, link.ProjectScopeHash = projectName, link.ScopeHash
@@ -698,14 +705,15 @@ func (s *Server) ssSubmitScan(ctx context.Context, t *Task, cl ssCaller, link *d
 	if ctx.Err() != nil || !scopeSentryTaskRunning(t.lifecycleSnapshot(), s.engine.Started(t.ID)) || s.engine.IsPaused(t.ID) {
 		return finish("blocked", "任务已暂停、完成或请求取消，未提交扫描")
 	}
-	if err := s.ssValidateCurrent(t, link.ScopeHash, actor); err != nil {
+	if err := s.ssValidateCurrent(t, link.ScopeHash, actor, templateText); err != nil {
 		return finish("blocked", err.Error())
 	}
-	if err := s.ssCheckTemplateUnchanged(ctx, t, cl, link.TemplateID, templateText); err != nil {
+	if err := s.ssCheckTemplateUnchanged(ctx, t, cl, link.TemplateID, templateText, targets, manual); err != nil {
 		return finish("blocked", err.Error())
 	}
 	// Persist submission intent before the remote side effect. An ambiguous timeout is reconciled, never blindly retried.
 	link.ScanName, link.ScanScopeHash, link.ScanState, link.State = name, link.ScopeHash, "submitted", "scanning"
+	link.ScanID, link.ScanRequestHash = "", requestHash
 	link.ScanStartedAt = time.Now().Unix()
 	if err := s.m.pg.SaveScopeSentryLink(*link); err != nil {
 		return *link, err
@@ -736,9 +744,9 @@ func ssTemplateDigest(text string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func (s *Server) ssCheckTemplateUnchanged(ctx context.Context, t *Task, cl ssCaller, id, snapshot string) error {
+func (s *Server) ssCheckTemplateUnchanged(ctx context.Context, t *Task, cl ssCaller, id, snapshot string, targets []ssTarget, explicit bool) error {
 	current, err := s.ssCall(ctx, t, cl, "get_scan_template", map[string]any{"id": id})
-	if err != nil || ssValidateTemplate(current) != nil || ssTemplateDigest(current) != ssTemplateDigest(snapshot) {
+	if err != nil || ssValidateTaskTemplate(current, targets, explicit) != nil || ssTemplateDigest(current) != ssTemplateDigest(snapshot) {
 		return fmt.Errorf("模板在审批期间发生变化或不可读，停止提交；请重新确认模板")
 	}
 	plugins, err := s.ssCall(ctx, t, cl, "list_plugins", map[string]any{})
@@ -816,7 +824,7 @@ func ssCheckEnabledPlugins(template, text string) error {
 	if err := json.Unmarshal([]byte(template), &raw); err != nil {
 		return err
 	}
-	for _, module := range []string{"AssetMapping", "AssetHandle", "PortScanPreparation", "PortScan", "PortFingerprint"} {
+	for _, module := range ssScanModules {
 		var hashes []string
 		_ = json.Unmarshal(raw[module], &hashes)
 		for _, hash := range hashes {
@@ -874,7 +882,7 @@ func (s *Server) ssRecoverProject(ctx context.Context, t *Task, cl ssCaller, lin
 	return "", nil
 }
 
-func (s *Server) ssValidateCurrent(t *Task, hash, actor string) error {
+func (s *Server) ssValidateCurrent(t *Task, hash, actor, template string) error {
 	lifecycle := t.lifecycleSnapshot()
 	if !scopeSentryTaskRunning(lifecycle, s.engine.Started(t.ID)) || lifecycle.Paused || lifecycle.Queued || s.engine.IsPaused(t.ID) || s.engine.IsDeleting(t.ID) || s.engine.isSettling(t.ID) ||
 		(lifecycle.DeadlineAt > 0 && time.Now().Unix() >= lifecycle.DeadlineAt) {
@@ -904,7 +912,7 @@ func (s *Server) ssValidateCurrent(t *Task, hash, actor string) error {
 	if ssScopeHash(targets) != hash {
 		return fmt.Errorf("授权范围或范围约束已变化，请重新检索后提交")
 	}
-	return nil
+	return ssCheckOperationConstraints(template, constraints)
 }
 
 func (s *Server) ssRefreshJob(ctx context.Context, t *Task, cl ssCaller, link *db.ScopeSentryLink) error {
@@ -989,7 +997,7 @@ func (s *Server) pollScopeSentryLinks() {
 					return
 				}
 				if t, ok := s.m.Task(strconv.FormatInt(id, 10)); ok {
-					_, _ = s.runScopeSentry(s.ctx, t, "poll", false, false)
+					s.queueScopeSentry(t)
 				}
 			}
 		}
@@ -1027,12 +1035,20 @@ func (s *Server) scopeSentryLinkTools() []actool.CoreTool {
 				}
 				return jsonResult(link)
 			}),
-		wrTool("scopesentry_scan", "对当前正在运行任务的明确登记范围发起一次固定目标端口/服务测绘，并自动回流结果。只用启用模块的模板，不扩域、爬虫或跑漏洞流水线；范围/约束/绑定/Guard 不通过则停止。先查看 scopesentry_status，已有扫描不重复提交。", objSchema(map[string]any{
-			"template_id": strParam("已配置模块的扫描模板 ObjectID；留空沿用任务模板，未选择时核验安全默认 HTTP 模板"), "reason": strParam("本次测绘与任务目标的关系及为何需要新扫描")}, "reason"),
+		wrTool("scopesentry_scan", "对运行任务的明确授权范围发起所选扫描，并回流资产。显式选择的已核验目录、子域和爬取模板按实际操作/范围检查；不自动扩权。模板留空只选安全默认 HTTP。相同模板与覆盖要求不重复提交；联动不阻止本地侦察。", objSchema(map[string]any{
+			"template_id": strParam("所选已核验模板 ObjectID；留空使用安全默认 HTTP"), "reason": strParam("本次扫描与任务目标的关系及为何需要新扫描"),
+			"coverage_mode":   strParam("可选：http/services/subdomains/urls；留空按模板判断"),
+			"max_age_seconds": map[string]any{"type": "integer", "description": "存量数据最大年龄秒数；默认 86400，0 使用默认值"},
+			"required_ports":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "需要覆盖的端口，不扩大任务授权范围"},
+			"required_urls":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "需要实际覆盖的范围内 HTTP/HTTPS URL"}}, "reason"),
 			func(ctx context.Context, raw json.RawMessage) (actool.Result, error) {
 				var args struct {
-					TemplateID string `json:"template_id"`
-					Reason     string `json:"reason"`
+					TemplateID    string   `json:"template_id"`
+					Reason        string   `json:"reason"`
+					CoverageMode  *string  `json:"coverage_mode"`
+					MaxAgeSeconds *int64   `json:"max_age_seconds"`
+					RequiredPorts []int    `json:"required_ports"`
+					RequiredURLs  []string `json:"required_urls"`
 				}
 				if err := json.Unmarshal(raw, &args); err != nil || strings.TrimSpace(args.Reason) == "" {
 					return actool.Errorf("需要说明扫描理由"), nil
@@ -1045,13 +1061,40 @@ func (s *Server) scopeSentryLinkTools() []actool.CoreTool {
 				if !ok {
 					return actool.Errorf("扫描必须在任务执行上下文中发起"), nil
 				}
-				if args.TemplateID != "" {
+				if args.TemplateID != "" || args.CoverageMode != nil || args.MaxAgeSeconds != nil || args.RequiredPorts != nil || args.RequiredURLs != nil {
 					lock := s.ssLock(t.ID)
 					lock.Lock()
 					link, err := s.m.pg.ScopeSentryLink(ri.TaskID)
 					if err == nil {
-						link.TemplateID = args.TemplateID
-						err = s.m.pg.SaveScopeSentryLink(link)
+						ssPreserveScanIdentity(&link)
+						if args.TemplateID != "" && args.TemplateID != link.TemplateID {
+							link.TemplateID, link.TemplateCoverage = args.TemplateID, ""
+						}
+						if args.CoverageMode != nil {
+							link.CoverageMode = *args.CoverageMode
+						}
+						if args.MaxAgeSeconds != nil {
+							link.MaxAgeSeconds = *args.MaxAgeSeconds
+						}
+						if args.RequiredPorts != nil {
+							link.RequiredPorts = args.RequiredPorts
+						}
+						if args.RequiredURLs != nil {
+							link.RequiredURLs = args.RequiredURLs
+						}
+						rows, scopeErr := s.m.assets.ListTaskScope(ri.TaskID)
+						targets, targetErr := ssTargets(rows)
+						if scopeErr != nil {
+							err = scopeErr
+						} else if targetErr != nil {
+							err = targetErr
+						} else {
+							err = ssValidateCoverage(&link, targets)
+						}
+						if err == nil {
+							link.CheckedAt = 0
+							err = s.m.pg.SaveScopeSentryLink(link)
+						}
 					}
 					lock.Unlock()
 					if err != nil {
@@ -1077,6 +1120,10 @@ func (s *Server) seedScopeSentryLinkTools() {
 			agents = json.RawMessage(`["auto","planner","mainagent","worker","pentest","reporter","verifier","retester"]`)
 		}
 		_ = s.m.pg.SeedTool(t.Name(), t.Description(), ssJSON(t.InputSchema()), agents)
+		_ = s.m.pg.MergeToolSchemaProperties(t.Name(), ssJSON(t.InputSchema()))
+		if t.Name() == "scopesentry_scan" {
+			_, _ = s.m.pg.Exec(`UPDATE tools SET description=$1 WHERE key='scopesentry_scan' AND system AND description=$2`, t.Description(), "对当前正在运行任务的明确登记范围发起一次固定目标端口/服务测绘，并自动回流结果。只用启用模块的模板，不扩域、爬虫或跑漏洞流水线；范围/约束/绑定/Guard 不通过则停止。先查看 scopesentry_status，已有扫描不重复提交。")
+		}
 	}
 }
 
@@ -1129,7 +1176,7 @@ func (s *Server) scopeSentryTemplates(w http.ResponseWriter, r *http.Request) {
 		// The catalog is a projection; its null module fields are not the template.
 		detail, err := cl.Call(ctx, "get_scan_template", map[string]any{"id": item.ID})
 		if err == nil {
-			err = ssValidateTemplate(detail)
+			err = ssValidateTaskTemplate(detail, nil, true)
 		} else {
 			err = fmt.Errorf("模板详情读取失败，请刷新后重试")
 		}
@@ -1144,7 +1191,7 @@ func (s *Server) scopeSentryTemplates(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			reason = err.Error()
 		}
-		items = append(items, map[string]any{"id": item.ID, "name": item.Name, "usable": err == nil, "default": err == nil && item.Name == scopeSentryDefaultTemplate && ssSafeDefaultTemplate(detail), "reason": reason})
+		items = append(items, map[string]any{"id": item.ID, "name": item.Name, "usable": err == nil, "automatic": err == nil && ssValidateTemplate(detail) == nil, "default": err == nil && item.Name == scopeSentryDefaultTemplate && ssSafeDefaultTemplate(detail), "reason": reason})
 	}
 	writeJSON(w, 200, map[string]any{"templates": items})
 }
@@ -1156,10 +1203,14 @@ func (s *Server) taskScopeSentryAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var args struct {
-		Action     string  `json:"action"`
-		Enabled    *bool   `json:"enabled"`
-		AutoScan   *bool   `json:"auto_scan"`
-		TemplateID *string `json:"template_id"`
+		Action        string   `json:"action"`
+		Enabled       *bool    `json:"enabled"`
+		AutoScan      *bool    `json:"auto_scan"`
+		TemplateID    *string  `json:"template_id"`
+		CoverageMode  *string  `json:"coverage_mode"`
+		MaxAgeSeconds *int64   `json:"max_age_seconds"`
+		RequiredPorts []int    `json:"required_ports"`
+		RequiredURLs  []string `json:"required_urls"`
 	}
 	if err := decode(r, &args); err != nil {
 		writeErr(w, 400, err.Error())
@@ -1190,11 +1241,42 @@ func (s *Server) taskScopeSentryAction(w http.ResponseWriter, r *http.Request) {
 				link.State, link.Summary = "skipped", "本任务已关闭 ScopeSentry 联动；不再追加查询或扫描，已提交远端任务需在 ScopeSentry 管理页处理"
 			}
 		}
+		ssPreserveScanIdentity(&link)
 		if args.AutoScan != nil {
 			link.AutoScan = *args.AutoScan
 		}
 		if args.TemplateID != nil {
-			link.TemplateID = strings.TrimSpace(*args.TemplateID)
+			if value := strings.TrimSpace(*args.TemplateID); value != link.TemplateID {
+				link.TemplateID, link.TemplateCoverage = value, ""
+			}
+		}
+		if args.CoverageMode != nil {
+			link.CoverageMode = *args.CoverageMode
+		}
+		if args.MaxAgeSeconds != nil {
+			link.MaxAgeSeconds = *args.MaxAgeSeconds
+		}
+		if args.RequiredPorts != nil {
+			link.RequiredPorts = args.RequiredPorts
+		}
+		if args.RequiredURLs != nil {
+			link.RequiredURLs = args.RequiredURLs
+		}
+		if link.Enabled {
+			rows, err := s.m.assets.ListTaskScope(id)
+			if err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+			targets, err := ssTargets(rows)
+			if err != nil {
+				writeErr(w, 400, err.Error())
+				return
+			}
+			if err := ssValidateCoverage(&link, targets); err != nil {
+				writeErr(w, 400, err.Error())
+				return
+			}
 		}
 		if link.TemplateID != "" {
 			if len(link.TemplateID) != 24 {
@@ -1214,6 +1296,7 @@ func (s *Server) taskScopeSentryAction(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err.Error())
 			return
 		}
+		s.resetScopeSentryRefresh(t)
 		t.Notify()
 		writeJSON(w, 200, link)
 		return

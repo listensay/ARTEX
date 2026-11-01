@@ -1,0 +1,314 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strconv"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Autumn-27/artex/agent"
+	"github.com/Autumn-27/artex/db"
+)
+
+func ssDirectoryFixture() map[string]any {
+	return map[string]any{"AssetMapping": []string{"3a0d994a12305cb15a5cb7104d819623"}, "DirScan": []string{"920546788addc6d29ea63e4a314a1b85"},
+		"Parameters": map[string]any{"AssetMapping": map[string]string{"3a0d994a12305cb15a5cb7104d819623": scopeSentryHTTPParameters}, "DirScan": map[string]string{"920546788addc6d29ea63e4a314a1b85": "-d {dict.dir.default} -t 3"}}}
+}
+
+func TestScopeSentryLinkBackgroundNeverBlocksOrDuplicates(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	fake := &ssFake{onAssets: func(ctx context.Context) {
+		once.Do(func() { close(started) })
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}}
+	fake.assets.Store(true)
+	s, task := ssTestServer(t, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx = ctx
+	// Registered last so network work is drained before fixture DB cleanup.
+	t.Cleanup(func() { cancel(); s.backgroundWG.Wait() })
+	before := time.Now()
+	for i := 0; i < 100; i++ {
+		s.queueScopeSentry(task)
+	}
+	if time.Since(before) > 250*time.Millisecond {
+		t.Fatal("optional recon blocked caller")
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("background recon did not start")
+	}
+	close(release)
+	s.backgroundWG.Wait()
+	if fake.queries.Load() != 2 {
+		t.Fatalf("duplicate refreshes: %d", fake.queries.Load())
+	}
+	if triggers := task.drainTriggers(); len(triggers) != 1 || triggers[0].Kind != "scopesentry" {
+		t.Fatalf("missing/coalescing failure: %+v", triggers)
+	}
+	s.queueScopeSentry(task)
+	s.backgroundWG.Wait()
+	if fake.queries.Load() != 2 || len(task.drainTriggers()) != 0 {
+		t.Fatal("cached status caused extra queries or planner events")
+	}
+}
+
+func TestScopeSentryLinkUnchangedAndDisabledDoNotNotify(t *testing.T) {
+	fake := &ssFake{}
+	fake.assets.Store(true)
+	s, task := ssTestServer(t, fake)
+	for i := 0; i < 2; i++ {
+		if _, err := s.runScopeSentry(t.Context(), task, "system", true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if triggers := task.drainTriggers(); len(triggers) != 1 {
+		t.Fatalf("unchanged status repeated: %+v", triggers)
+	}
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	link, _ := s.m.pg.ScopeSentryLink(id)
+	link.Enabled = false
+	if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.runScopeSentry(t.Context(), task, "system", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(task.drainTriggers()) != 0 {
+		t.Fatal("disabled integration injected planner instructions")
+	}
+	task.notifyScopeSentry("first")
+	task.notifyScopeSentry("latest")
+	if events := task.drainTriggers(); len(events) != 1 || events[0].Detail != "latest" {
+		t.Fatal(events)
+	}
+}
+
+func TestScopeSentryLinkFreshnessAndCoverageRequirements(t *testing.T) {
+	targets := []ssTarget{{Host: "example.test"}}
+	now := time.Now().Unix()
+	for _, tc := range []struct {
+		name     string
+		mode     string
+		age      int64
+		ports    []int
+		urls     []string
+		observed int64
+		want     bool
+	}{
+		{name: "fresh-http", observed: now, want: true},
+		{name: "unknown-age"},
+		{name: "stale", observed: now - 90000},
+		{name: "future-clock", observed: now + 600},
+		{name: "stricter-age", observed: now - 120, age: 60},
+		{name: "one-http-not-service-inventory", observed: now, mode: "services"},
+		{name: "missing-port", observed: now, ports: []int{443, 8080}},
+		{name: "required-port", observed: now, ports: []int{443}, want: true},
+		{name: "missing-url", observed: now, urls: []string{"https://example.test/api"}},
+		{name: "required-url", observed: now, urls: []string{"https://example.test/"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			link := db.ScopeSentryLink{CoverageMode: tc.mode, MaxAgeSeconds: tc.age, RequiredPorts: tc.ports, RequiredURLs: tc.urls}
+			c := ssCoverage{link: link, ports: map[string]map[int]bool{}, urls: map[string]bool{}, http: map[string]bool{}}
+			c.observe("asset", ssJSON(map[string]any{"url": "https://example.test/", "status": 200, "last_seen": tc.observed}), targets)
+			if got := c.covered("example.test"); got != tc.want {
+				t.Fatalf("covered=%v want=%v", got, tc.want)
+			}
+		})
+	}
+	link := db.ScopeSentryLink{CoverageMode: "services", TemplateCoverage: "services", ScopeHash: "scope", ScanScopeHash: "scope", ScanName: "scan", ScanState: "completed", ScanStartedAt: now}
+	link.ScanRequestHash = ssScanKey(link)
+	c := ssCoverage{link: link, ports: map[string]map[int]bool{}, urls: map[string]bool{}, http: map[string]bool{}}
+	c.observe("asset", ssJSON(map[string]any{"url":"https://example.test/", "status":200, "last_seen":now}), targets)
+	if !c.covered("example.test") {
+		t.Fatal("matching completed service inventory ignored")
+	}
+	c.link.TemplateID = "different"
+	if c.covered("example.test") {
+		t.Fatal("different template counted as equivalent coverage")
+	}
+	c.link = link
+	c.link.TemplateCoverage = "http"
+	if c.covered("example.test") { t.Fatal("completed HTTP mapping substituted for service inventory") }
+	invalid := db.ScopeSentryLink{RequiredURLs: []string{"https://outside.test/"}}
+	if ssValidateCoverage(&invalid, targets) == nil {
+		t.Fatal("coverage requirements expanded scope")
+	}
+}
+
+func TestScopeSentryLinkOperationSpecificPoliciesAndExplicitTemplates(t *testing.T) {
+	http := string(ssJSON(map[string]any{"AssetMapping": []string{"3a0d994a12305cb15a5cb7104d819623"}, "Parameters": map[string]any{"AssetMapping": map[string]string{"3a0d994a12305cb15a5cb7104d819623": scopeSentryHTTPParameters}}}))
+	for _, text := range []string{"禁止端口扫描", "禁止暴力破解", "禁止破坏性测试", "不得进行暴力破解、拒绝服务攻击或破坏性操作"} {
+		if err := ssCheckOperationConstraints(http, []db.Constraint{{Kind: "deny", Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, text := range []string{"禁止创建扫描", "禁止主动探测", "只能在工作时间扫描"} {
+		if ssCheckOperationConstraints(http, []db.Constraint{{Kind: "deny", Text: text}}) == nil {
+			t.Fatalf("ignored: %s", text)
+		}
+	}
+	if ssCheckOperationConstraints(`{"PortScan":["66b4ddeb983387df2b7ee7726653874d"]}`, []db.Constraint{{Kind: "deny", Text: "禁止端口扫描"}}) == nil {
+		t.Fatal("forbidden port scan allowed")
+	}
+	directory := string(ssJSON(ssDirectoryFixture()))
+	targets := []ssTarget{{Host: "example.test"}}
+	if err := ssValidateTaskTemplate(directory, targets, true); err != nil {
+		t.Fatal(err)
+	}
+	if ssValidateTaskTemplate(directory, targets, false) == nil {
+		t.Fatal("advanced template silently became automatic")
+	}
+	if ssCheckOperationConstraints(directory, []db.Constraint{{Kind: "deny", Text: "禁止目录扫描"}}) == nil {
+		t.Fatal("directory prohibition ignored")
+	}
+	crawl := string(ssJSON(map[string]any{"URLScan": []string{"9669d0dcc52a5ca6dbbe580ffc99c364"}, "Parameters": map[string]any{"URLScan": map[string]string{"9669d0dcc52a5ca6dbbe580ffc99c364": ssExplicitPlugins["URLScan"]["9669d0dcc52a5ca6dbbe580ffc99c364"]}}}))
+	if ssValidateTaskTemplate(crawl, targets, true) == nil {
+		t.Fatal("root-domain crawler authorized on an exact host")
+	}
+	if err := ssValidateTaskTemplate(crawl, []ssTarget{{Host: "example.test", Children: true}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if ssValidateTaskTemplate(`{"DirScan":["unreviewed"]}`, targets, true) == nil {
+		t.Fatal("unknown plugin allowed")
+	}
+}
+
+func TestScopeSentryLinkExplicitDirectoryRunsAndRespectsApproval(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			fake := &ssFake{templateOverride: ssDirectoryFixture()}
+			s, task := ssTestServer(t, fake)
+			id, _ := strconv.ParseInt(task.ID, 10, 64)
+			link, _ := s.m.pg.ScopeSentryLink(id)
+			link.AutoScan, link.TemplateID = true, ssTestTemplate
+			if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.runScopeSentry(t.Context(), task, "worker", true, explicit); err != nil {
+				t.Fatal(err)
+			}
+			want := int32(0)
+			if explicit {
+				want = 1
+			}
+			if fake.scans.Load() != want {
+				t.Fatalf("explicit=%v scans=%d", explicit, fake.scans.Load())
+			}
+		})
+	}
+}
+
+func TestScopeSentryLinkScanDedupUsesTemplateAndRequirements(t *testing.T) {
+	fake := &ssFake{}
+	s, task := ssTestServer(t, fake)
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	link, _ := s.m.pg.ScopeSentryLink(id)
+	link.TemplateID = ssTestTemplate
+	if err := s.m.pg.SaveScopeSentryLink(link); err != nil {
+		t.Fatal(err)
+	}
+	tool := s.scopeSentryLinkTools()[1]
+	ctx := agent.WithRunInfo(t.Context(), agent.RunInfo{TaskID: id, AgentKey: "worker"})
+	call := func(args map[string]any) {
+		t.Helper()
+		result, err := tool.Call(ctx, ssJSON(args), nil)
+		if err != nil || result.IsError {
+			t.Fatalf("%s: %v", result.Flatten(), err)
+		}
+	}
+	call(map[string]any{"reason": "initial fixture"})
+	fake.finished.Store(true)
+	call(map[string]any{"reason": "same fixture"})
+	if fake.scans.Load() != 1 {
+		t.Fatal("identical scan repeated")
+	}
+	call(map[string]any{"reason": "different template fixture", "template_id": "444444444444444444444444"})
+	if fake.scans.Load() != 2 {
+		t.Fatal("scope-only dedup suppressed different template")
+	}
+	call(map[string]any{"reason": "new port coverage fixture", "required_ports": []int{443, 8080}})
+	if fake.scans.Load() != 3 {
+		t.Fatal("new coverage requirements were ignored")
+	}
+}
+
+func TestScopeSentryLinkExplicitRegistryMatchesScenarioCatalog(t *testing.T) {
+	data, err := os.ReadFile("../deploy/scopesentry/templates/scenario-catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Plugins map[string]struct{ Hash, Module, Parameter string }
+	}
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range catalog.Plugins {
+		value, ok := ssExplicitPlugins[p.Module][p.Hash]
+		if !ok || value != p.Parameter {
+			t.Fatalf("registry drift for %s", name)
+		}
+	}
+}
+
+func TestScopeSentryLinkBackgroundCancellation(t *testing.T) {
+	for _, scenario := range []string{"pause", "delete", "shutdown"} {
+		t.Run(scenario, func(t *testing.T) {
+			started := make(chan struct{})
+			var once sync.Once
+			fake := &ssFake{onAssets: func(ctx context.Context) { once.Do(func() { close(started) }); <-ctx.Done() }}
+			s, task := ssTestServer(t, fake)
+			ctx, cancel := context.WithCancel(context.Background())
+			s.ctx = ctx
+			t.Cleanup(func() { cancel(); s.backgroundWG.Wait() })
+			s.queueScopeSentry(task)
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("refresh did not start")
+			}
+			switch scenario {
+			case "pause":
+				s.engine.Pause(task.ID, context.Canceled)
+			case "delete":
+				s.engine.BeginDelete(task.ID)
+			case "shutdown":
+				cancel()
+			}
+			done := make(chan struct{})
+			go func() { s.backgroundWG.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("remote refresh ignored task/server cancellation")
+			}
+			if fake.scans.Load() != 0 {
+				t.Fatal("canceled task submitted a scan")
+			}
+		})
+	}
+}
+
+func TestScopeSentryLinkEmptyRefreshAndEquivalentScanKeys(t *testing.T) {
+	s, task := ssTestServer(t, &ssFake{})
+	if _, err := s.runScopeSentry(t.Context(), task, "system", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(task.drainTriggers()) != 0 {
+		t.Fatal("empty optional data caused an extra planner round")
+	}
+	a := db.ScopeSentryLink{ScopeHash: "scope", TemplateID: "AAAAAAAAAAAAAAAAAAAAAAAA", RequiredPorts: []int{443, 80, 443}}
+	b := db.ScopeSentryLink{ScopeHash: "scope", TemplateID: "aaaaaaaaaaaaaaaaaaaaaaaa", RequiredPorts: []int{80, 443}, RequiredURLs: []string{}}
+	if ssScanKey(a) != ssScanKey(b) {
+		t.Fatal("ordering/empty arrays/duplicate ports defeated scan deduplication")
+	}
+}

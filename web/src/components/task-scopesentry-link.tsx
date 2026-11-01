@@ -88,6 +88,7 @@ export function TaskScopeSentryLink({ taskId, running }: { taskId: string; runni
     ? templates.some((item) => item.id === link.template_id && item.usable)
     : defaultReady;
   const scanDisabled = busy || !running || !link?.enabled || !templateReady || link?.state === "scanning";
+  const explicitOnly = templates.find((item) => item.id === link?.template_id)?.automatic === false;
 
   return (
     <Card aria-labelledby="scopesentry-link-title">
@@ -141,13 +142,20 @@ export function TaskScopeSentryLink({ taskId, running }: { taskId: string; runni
         </div>
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
           <div className="grid min-w-0 gap-1.5">
-            <Label htmlFor="scopesentry-link-template">端口／服务测绘模板</Label>
+            <Label htmlFor="scopesentry-link-template">扫描模板</Label>
             <NativeSelect
               id="scopesentry-link-template"
               className="w-full"
               value={link?.template_id ?? ""}
               disabled={!link || busy}
-              onChange={(e) => void action({ action: "config", template_id: e.target.value })}
+              onChange={(e) => {
+                const selected = templates.find((item) => item.id === e.target.value);
+                void action({
+                  action: "config",
+                  template_id: e.target.value,
+                  ...(selected?.automatic === false ? { auto_scan: false } : {}),
+                });
+              }}
             >
               <NativeSelectOption value="">
                 {defaultReady ? "安全默认 · HTTP 服务测绘" : "请先配置或选择有效模板"}
@@ -155,7 +163,7 @@ export function TaskScopeSentryLink({ taskId, running }: { taskId: string; runni
               {templates.map((item) => (
                 <NativeSelectOption key={item.id} value={item.id} disabled={!item.usable}>
                   {item.name}
-                  {!item.usable ? " · 不适用于自动测绘" : ""}
+                  {!item.usable ? " · 暂不可用" : item.automatic === false ? " · 显式发起" : ""}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
@@ -166,8 +174,31 @@ export function TaskScopeSentryLink({ taskId, running }: { taskId: string; runni
         </div>
         <p className="text-muted-foreground text-xs">
           留空只使用已核验的安全默认 HTTP
-          模板，不自动开启扫描授权。仅声明已登记主机的范围约束可核对通过；禁止操作、路径／端口限制或无法解析的约束仍阻止自动扫描。
+          模板，不自动开启扫描授权。其他已核验模板可显式发起，按实际操作与授权范围检查。后台联动不阻止本地侦察或验证。
         </p>
+        <div className="grid gap-1.5">
+          <Label htmlFor="scopesentry-link-coverage">存量数据覆盖要求</Label>
+          <NativeSelect
+            id="scopesentry-link-coverage"
+            value={link?.coverage_mode ?? ""}
+            disabled={!link || busy}
+            onChange={(e) =>
+              void action({
+                action: "config",
+                coverage_mode: e.target.value as NonNullable<ScopeSentryLink["coverage_mode"]>,
+              })
+            }
+          >
+            <NativeSelectOption value="">按所选模板判断</NativeSelectOption>
+            <NativeSelectOption value="http">HTTP 服务</NativeSelectOption>
+            <NativeSelectOption value="services">端口与服务清单</NativeSelectOption>
+            <NativeSelectOption value="subdomains">子域名测绘</NativeSelectOption>
+            <NativeSelectOption value="urls">URL／目录采集</NativeSelectOption>
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">
+            默认只复用 24 小时内的数据；时间未知或仅有一条服务记录不代表清单完整。
+          </p>
+        </div>
         {templateError && (
           <p role="alert" className="text-destructive text-xs">
             模板读取失败：{templateError}。请检查数据源后重新打开此页。
@@ -184,12 +215,12 @@ export function TaskScopeSentryLink({ taskId, running }: { taskId: string; runni
             <Switch
               id="scopesentry-link-auto-scan"
               checked={link?.auto_scan ?? false}
-              disabled={busy || !link || !templateReady}
+              disabled={busy || !link || !templateReady || explicitOnly}
               onCheckedChange={(enabled) =>
                 void action({ action: "config", auto_scan: enabled, template_id: link?.template_id })
               }
             />
-            授权缺少存量数据时自动补扫
+            {explicitOnly ? "所选模板需要显式发起，不执行自动补扫" : "授权数据缺失、过期或覆盖不足时自动补扫"}
           </label>
           <AlertDialog>
             <AlertDialogTrigger asChild>
@@ -200,7 +231,7 @@ export function TaskScopeSentryLink({ taskId, running }: { taskId: string; runni
                 <AlertDialogTitle>对本任务登记范围发起测绘？</AlertDialogTitle>
                 <AlertDialogDescription>
                   仅使用所选模板扫描明确登记的目标。新扫描仍经过任务 Guard
-                  和审批；纯目标范围声明会与登记范围核对，其余操作约束需人工处理。已提交扫描不会因 ARTEX
+                  和审批；按模板实际操作检查约束，扩域／根域爬取需明确授权相应范围。已提交扫描不会因 ARTEX
                   暂停而自动终止，需要在 ScopeSentry 管理页处理。
                 </AlertDialogDescription>
               </AlertDialogHeader>

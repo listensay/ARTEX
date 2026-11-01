@@ -1093,13 +1093,30 @@ export const api = {
 
   // ---- 资产同步 (ScopeSentry 数据源) ----
   taskScopeSentry: (taskId: string) => get<ScopeSentryLink>(`/tasks/${taskId}/scopesentry`),
-  taskScopeSentryAction: (taskId: string, body: {
-    action: "config" | "refresh" | "scan";
-    enabled?: boolean;
-    auto_scan?: boolean;
-    template_id?: string;
-  }) => post<ScopeSentryLink>(`/tasks/${taskId}/scopesentry`, body),
-  ssTemplates: () => get<{ templates: { id: string; name: string; usable: boolean; default?: boolean; reason: string }[] }>("/sync/scopesentry/templates"),
+  taskScopeSentryAction: (
+    taskId: string,
+    body: {
+      action: "config" | "refresh" | "scan";
+      enabled?: boolean;
+      auto_scan?: boolean;
+      template_id?: string;
+      coverage_mode?: "" | "http" | "services" | "subdomains" | "urls";
+      max_age_seconds?: number;
+      required_ports?: number[];
+      required_urls?: string[];
+    },
+  ) => post<ScopeSentryLink>(`/tasks/${taskId}/scopesentry`, body),
+  ssTemplates: () =>
+    get<{
+      templates: {
+        id: string;
+        name: string;
+        usable: boolean;
+        automatic?: boolean;
+        default?: boolean;
+        reason: string;
+      }[];
+    }>("/sync/scopesentry/templates"),
   ssStatus: () =>
     get<{ exists: boolean; configured: boolean; enabled: boolean; reachable: boolean; url?: string; tools: string[] }>(
       "/sync/scopesentry/status",

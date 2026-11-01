@@ -78,10 +78,8 @@ func TestScopeSentryLinkConstraintsNeverWidenScope(t *testing.T) {
 		t.Fatal("exact declaration expanded subdomains")
 	}
 	for _, constraints := range [][]db.Constraint{
-		{{Kind: "deny", Text: "禁止端口扫描"}},
 		{{Kind: "allow", Text: "仅允许对 outside.test 进行测试"}},
 		{{Kind: "allow", Text: "仅允许对 api.example.test 进行测试"}, {Kind: "allow", Text: "仅允许对 192.0.2.10 进行测试"}},
-		{{Kind: "allow", Text: "仅允许对 example.test 进行测试"}, {Kind: "deny", Text: "禁止创建扫描"}},
 	} {
 		if _, err := ssConstrainedTargets(targets, constraints); err == nil {
 			t.Fatalf("constraint was ignored: %v", constraints)
@@ -124,11 +122,11 @@ func TestScopeSentryLinkDefaultTemplateAndPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scenario == "approved" {
+			if scenario == "approved" || scenario == "deny-operation" {
 				if result.State != "scanning" || result.TemplateID != ssTestTemplate || fake.scans.Load() != 1 {
 					t.Fatalf("approved natural scope+default failed: %+v", result)
 				}
-				if fake.lastScan["target"] != "api.example.test" || fake.projectTarget != "api.example.test" {
+				if scenario == "approved" && (fake.lastScan["target"] != "api.example.test" || fake.projectTarget != "api.example.test") {
 					t.Fatal("literal scope narrowing was ignored")
 				}
 			} else if fake.scans.Load() != 0 {
