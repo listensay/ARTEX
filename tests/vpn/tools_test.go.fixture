@@ -1,0 +1,173 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/Autumn-27/artex/agent"
+	actool "github.com/Autumn-27/norma/tool"
+)
+
+func vpnFakeBroker(t *testing.T, handler http.HandlerFunc) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "vpn-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if err := os.Mkdir(filepath.Join(dir, "artex"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", filepath.Join(dir, "artex", "agent.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: handler}
+	t.Cleanup(func() { server.Close() })
+	go server.Serve(listener)
+	return dir
+}
+
+func TestVPNModelListUsesManagedProxy(t *testing.T) {
+	var requests atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Host != "not-reached.invalid" || r.URL.Path != "/v1/models" {
+			t.Errorf("unexpected proxy request %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[{"id":"vpn-model"}]}`))
+	}))
+	defer proxy.Close()
+	t.Setenv("ARTEX_VPN_LLM_PROXY", proxy.URL)
+	body := `{"provider":"openai","base_url":"http://not-reached.invalid/v1","proxy":"http://127.0.0.1:1"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/llm/models", bytes.NewBufferString(body))
+	response := httptest.NewRecorder()
+	(&Server{}).pgListModels(response, request)
+	if !strings.Contains(response.Body.String(), "vpn-model") || requests.Load() != 1 {
+		t.Fatalf("%s requests=%d", response.Body.String(), requests.Load())
+	}
+}
+
+func TestVPNNativeToolAgentCall(t *testing.T) {
+	var calls atomic.Int32
+	dir := vpnFakeBroker(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Method != "POST" || r.URL.Path != "/switch" {
+			t.Errorf("unexpected call %s %s", r.Method, r.URL.Path)
+		}
+		var args map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+			t.Error(err)
+		}
+		if args["task_id"] != float64(7) || args["node"] != "second" || args["expected_current"] != "first" || args["request_id"] == "" {
+			t.Errorf("runtime args: %v", args)
+		}
+		w.Write([]byte(`{"component":"artex","selected":"second","previous":"first","changed":true,"scope":"component_shared","existing_connections_unchanged":true,"egress_ip_verified":false}`))
+	})
+	t.Setenv("ARTEX_VPN_CONTROL_DIR", dir)
+	s := &Server{m: &Manager{tasks: map[string]*Task{"7": {ID: "7", Status: "running"}}}, engine: &Engine{}}
+	s.engine.started.Store("7", true)
+	tools := s.vpnTools()
+	if len(tools) != 2 {
+		t.Fatal("missing VPN tools")
+	}
+	ctx := agent.WithRunInfo(t.Context(), agent.RunInfo{TaskID: 7, AgentKey: "worker"})
+	res, err := tools[1].Call(ctx, json.RawMessage(`{"node":"second","expected_current":"first","reason":"Agent observed repeated connection failure"}`), &actool.ToolContext{})
+	if err != nil || res.IsError || !strings.Contains(res.Flatten(), `"changed":true`) {
+		t.Fatalf("result=%s error=%v", res.Flatten(), err)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("wall detector or extra target request was invoked")
+	}
+	res, _ = tools[1].Call(ctx, json.RawMessage(`{"node":"second","expected_current":"first","reason":"x","task_id":999}`), &actool.ToolContext{})
+	if !res.IsError || calls.Load() != 1 {
+		t.Fatal("model can override task identity")
+	}
+}
+
+func TestVPNNativeTaskLifecycleBarrier(t *testing.T) {
+	dir := vpnFakeBroker(t, func(http.ResponseWriter, *http.Request) { t.Error("inactive task reached broker") })
+	t.Setenv("ARTEX_VPN_CONTROL_DIR", dir)
+	for _, status := range []string{"paused", "queued", "done", "unstarted", "cancelled", "missing"} {
+		t.Run(status, func(t *testing.T) {
+			s := &Server{m: &Manager{tasks: map[string]*Task{"7": {ID: "7"}}}, engine: &Engine{}}
+			s.engine.started.Store("7", true)
+			switch status {
+			case "paused":
+				s.engine.paused.Store("7", true)
+			case "queued":
+				s.m.tasks["7"].Queued = true
+			case "done":
+				s.m.tasks["7"].Status = "done"
+			case "unstarted":
+				s.engine.started.Delete("7")
+			case "missing":
+				delete(s.m.tasks, "7")
+			}
+			ctx := agent.WithRunInfo(t.Context(), agent.RunInfo{TaskID: 7})
+			if status == "cancelled" {
+				c, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = c
+			}
+			res, _ := s.vpnTools()[1].Call(ctx, json.RawMessage(`{"node":"second","expected_current":"first","reason":"route failure"}`), &actool.ToolContext{})
+			if !res.IsError {
+				t.Fatal("inactive task can change global route")
+			}
+		})
+	}
+	s := &Server{}
+	res, _ := s.vpnTools()[1].Call(t.Context(), json.RawMessage(`{"node":"second","expected_current":"first","reason":"route failure"}`), &actool.ToolContext{})
+	if !res.IsError {
+		t.Fatal("taskless switch allowed")
+	}
+}
+
+func TestVPNIPCStrictSurface(t *testing.T) {
+	var calls atomic.Int32
+	dir := vpnFakeBroker(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/status" {
+			t.Errorf("unexpected endpoint: %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"component":"scopesentry","selected":"private","subscription_url":"https://secret.invalid"}`))
+	})
+	if _, _, err := vpnRequest(t.Context(), dir, "../controller", http.MethodGet, nil); err == nil {
+		t.Fatal("path traversal")
+	}
+	if _, _, err := vpnRequest(t.Context(), dir, "artex", http.MethodDelete, nil); err == nil {
+		t.Fatal("general controller operation")
+	}
+	if calls.Load() != 0 {
+		t.Fatal("invalid request reached IPC")
+	}
+	if _, _, err := vpnRequest(t.Context(), dir, "artex", http.MethodGet, nil); err == nil {
+		t.Fatal("mismatched component accepted")
+	}
+	t.Setenv("ARTEX_VPN_CONTROL_DIR", "")
+	if len((&Server{}).vpnTools()) != 0 {
+		t.Fatal("VPN tools advertised on non-VPN deployment")
+	}
+}
+
+func TestVPNBrokerCooldownIsToolError(t *testing.T) {
+	dir := vpnFakeBroker(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		w.Write([]byte(`{"error_code":"switch_cooldown","retry_after_seconds":30}`))
+	})
+	response, status, err := vpnRequest(t.Context(), dir, "artex", http.MethodGet, nil)
+	res, _ := vpnToolResult(response, status, err)
+	if !res.IsError || !strings.Contains(res.Flatten(), "switch_cooldown") || !strings.Contains(res.Flatten(), "30") {
+		t.Fatalf("%s", res.Flatten())
+	}
+}

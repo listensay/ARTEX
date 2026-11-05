@@ -79,12 +79,14 @@ gate.key
 
 # Authentication and gate secrets
 .secrets/
+.vpn/
 gate.token
 gate.key
 
 /output/playwright/
 /tests/conversation-performance/local/
 /tests/scopesentry-lab/local/
+/tests/vpn/local/
 
 # 第一批稳定性搬迁记录
 !/docs/stability-migration.md

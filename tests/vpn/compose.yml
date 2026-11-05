@@ -1,0 +1,77 @@
+x-test: &test
+  image: artex-vpn:local
+  entrypoint: [python3, /tests/server.py]
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  volumes: [".:/tests:ro"]
+  cpus: 0.25
+  mem_limit: 64m
+  memswap_limit: 64m
+  restart: "no"
+
+services:
+  target:
+    <<: *test
+    environment: {ROLE: target}
+    networks: {outside: {ipv4_address: 172.30.244.2}}
+  proxy-one:
+    <<: *test
+    environment: {ROLE: socks}
+    networks: {outside: {ipv4_address: 172.30.244.3}}
+  proxy-two:
+    <<: *test
+    environment: {ROLE: socks}
+    networks: {outside: {ipv4_address: 172.30.244.4}}
+  internal-service:
+    <<: *test
+    environment: {ROLE: target}
+    networks: {inside: {ipv4_address: 172.30.245.2}}
+  gateway:
+    image: artex-vpn:local
+    build: ../../deploy/vpn
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    devices: [/dev/net/tun:/dev/net/tun]
+    environment:
+      VPN_INTERNAL_SERVICES: "internal-service:18080"
+      VPN_LISTEN_PORTS: "18082"
+      VPN_AGENT_CONTROL: "1"
+      VPN_COMPONENT: artex
+    volumes: ["./local:/vpn:ro", "control:/control"]
+    read_only: true
+    tmpfs: [/run/vpn:mode=0700, /var/lib/mihomo:mode=0700, /tmp]
+    cpus: 1
+    mem_limit: 256m
+    memswap_limit: 256m
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    healthcheck:
+      test: [CMD, python3, /opt/vpn/runtime.py, ready]
+      interval: 2s
+      timeout: 4s
+      start_period: 5s
+      retries: 15
+    depends_on: [target, proxy-one, proxy-two, internal-service]
+    networks:
+      outside: {ipv4_address: 172.30.244.5}
+      inside: {ipv4_address: 172.30.245.3}
+    restart: "no"
+  client:
+    <<: *test
+    entrypoint: [python3, -m, http.server, "18082", --directory, /tests]
+    network_mode: service:gateway
+    volumes:
+      - .:/tests:ro
+      - ../../deploy/vpn/resolv.conf:/etc/resolv.conf:ro
+      - control:/app/vpn-control/artex:ro
+    depends_on: {gateway: {condition: service_healthy}}
+
+networks:
+  outside: {internal: true, ipam: {config: [{subnet: 172.30.244.0/24}]}}
+  inside: {internal: true, ipam: {config: [{subnet: 172.30.245.0/24}]}}
+
+volumes:
+  control: {}

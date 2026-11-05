@@ -415,9 +415,18 @@ func requestBodySnapshot(req *http.Request) string {
 	return string(b)
 }
 
+// VPN deployments override legacy per-profile proxies without rewriting saved
+// profiles. A bad managed proxy still fails closed in the normal URL validation.
+func EffectiveLLMProxy(proxy string) string {
+	if managed := strings.TrimSpace(os.Getenv("ARTEX_VPN_LLM_PROXY")); managed != "" {
+		return managed
+	}
+	return strings.TrimSpace(proxy)
+}
+
 func quotaAwareHTTPClient(proxy, sessionHeaderKey string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	proxy = strings.TrimSpace(proxy)
+	proxy = EffectiveLLMProxy(proxy)
 	if proxy == "" {
 		transport.Proxy = nil // 留空=直连,不回退 HTTP_PROXY/HTTPS_PROXY 环境变量
 	} else {

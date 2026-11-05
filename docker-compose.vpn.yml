@@ -1,0 +1,140 @@
+# Opt-in overlay. Never launch with the base compose file alone after enabling it.
+x-vpn: &vpn
+  image: artex-vpn:local
+  build: ./deploy/vpn
+  cap_drop: [ALL]
+  cap_add: [NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE]
+  security_opt: [no-new-privileges:true]
+  devices: [/dev/net/tun:/dev/net/tun]
+  volumes:
+    - type: bind
+      source: ./.vpn
+      target: /vpn
+      read_only: true
+      bind: {create_host_path: false}
+  read_only: true
+  tmpfs:
+    - /run/vpn:mode=0700
+    - /var/lib/mihomo:mode=0700
+    - /tmp
+  sysctls:
+    net.ipv6.conf.all.disable_ipv6: "1"
+    net.ipv6.conf.default.disable_ipv6: "1"
+  healthcheck:
+    test: [CMD, python3, /opt/vpn/runtime.py, ready]
+    interval: 5s
+    timeout: 4s
+    start_period: 30s
+    retries: 12
+  restart: unless-stopped
+
+services:
+  vpn-artex:
+    <<: *vpn
+    environment:
+      VPN_INTERNAL_SERVICES: "postgres:5432 scopesentry:8082 ${ARTEX_VPN_INTERNAL_SERVICES:-}"
+      VPN_LISTEN_PORTS: "8787 8788"
+      VPN_AGENT_CONTROL: "1"
+      VPN_COMPONENT: artex
+    volumes:
+      - type: bind
+        source: ./.vpn
+        target: /vpn
+        read_only: true
+        bind: {create_host_path: false}
+      - vpn-control-artex:/control
+    depends_on:
+      postgres: {condition: service_healthy}
+      scopesentry: {condition: service_healthy}
+    ports:
+      - "${ARTEX_HTTP_BIND:-127.0.0.1}:8787:8787"
+      - "127.0.0.1:8788:8788"
+    networks: [database, scopesentry-api, egress]
+
+  vpn-scopesentry:
+    <<: *vpn
+    environment:
+      VPN_INTERNAL_SERVICES: scopesentry-mongodb:27017 scopesentry-redis:6379
+      VPN_LISTEN_PORTS: "8082"
+      VPN_AGENT_CONTROL: "1"
+      VPN_COMPONENT: scopesentry
+    volumes:
+      - type: bind
+        source: ./.vpn
+        target: /vpn
+        read_only: true
+        bind: {create_host_path: false}
+      - vpn-control-scopesentry:/control
+    depends_on:
+      scopesentry-mongodb: {condition: service_healthy}
+      scopesentry-redis: {condition: service_healthy}
+    ports:
+      - "127.0.0.1:${SCOPESENTRY_PORT:-8082}:8082"
+    networks:
+      scopesentry-database: {}
+      scopesentry-api: {aliases: [scopesentry]}
+      egress: {}
+
+  vpn-scopesentry-scan:
+    <<: *vpn
+    environment:
+      VPN_INTERNAL_SERVICES: scopesentry-mongodb:27017 scopesentry-redis:6379
+      VPN_AGENT_CONTROL: "1"
+      VPN_COMPONENT: scopesentry_scan
+    volumes:
+      - type: bind
+        source: ./.vpn
+        target: /vpn
+        read_only: true
+        bind: {create_host_path: false}
+      - vpn-control-scopesentry-scan:/control
+    depends_on:
+      scopesentry-mongodb: {condition: service_healthy}
+      scopesentry-redis: {condition: service_healthy}
+    networks: [scopesentry-database, egress]
+
+  artex:
+    network_mode: service:vpn-artex
+    networks: !reset []
+    ports: !reset []
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    environment:
+      ARTEX_VPN_CONTROL_DIR: /app/vpn-control
+      ARTEX_VPN_LLM_PROXY: http://127.0.0.1:7890
+    volumes:
+      - ./deploy/vpn/resolv.conf:/etc/resolv.conf:ro
+      - vpn-control-artex:/app/vpn-control/artex:ro
+      - vpn-control-scopesentry:/app/vpn-control/scopesentry:ro
+      - vpn-control-scopesentry-scan:/app/vpn-control/scopesentry_scan:ro
+    depends_on:
+      vpn-artex: {condition: service_healthy, restart: true}
+
+  scopesentry:
+    network_mode: service:vpn-scopesentry
+    networks: !reset []
+    ports: !reset []
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./deploy/vpn/resolv.conf:/etc/resolv.conf:ro
+    depends_on:
+      vpn-scopesentry: {condition: service_healthy, restart: true}
+
+  scopesentry-scan:
+    network_mode: service:vpn-scopesentry-scan
+    networks: !reset []
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./deploy/vpn/resolv.conf:/etc/resolv.conf:ro
+    depends_on:
+      vpn-scopesentry-scan: {condition: service_healthy, restart: true}
+
+volumes:
+  vpn-control-artex: {}
+  vpn-control-scopesentry: {}
+  vpn-control-scopesentry-scan: {}

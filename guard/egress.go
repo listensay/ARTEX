@@ -57,7 +57,7 @@ func (g *Guard) checkEgress(ev hook.Event, cmd string) (hook.Result, bool) {
 		return hook.Result{}, false
 	}
 	texts := []string{cmd}
-	if ev.ToolName == "WebFetch" || ev.ToolName == "register_session" || ev.ToolName == "session_exec" || ev.ToolName == "session_write" || ev.ToolName == "stage_share" {
+	if ev.ToolName == "WebFetch" || ev.ToolName == "register_session" || ev.ToolName == "session_exec" || ev.ToolName == "session_write" || ev.ToolName == "stage_share" || ev.ToolName == "vpn_switch_node" {
 		// Inspect all string fields, including URL, body and nested headers.
 		var input any
 		if json.Unmarshal(ev.Input, &input) == nil {

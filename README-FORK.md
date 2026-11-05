@@ -2,6 +2,63 @@
 
 本文仅记录本仓库二次开发新增的功能、配置和部署差异。原项目文档保留在 [README.md](README.md)，保持原样；后续二次开发说明统一维护在本文件。Agent 协作规则见 [AGENTS.md](AGENTS.md)。
 
+## Clash 订阅与 VPN-only Docker 部署
+
+可选覆盖文件 `docker-compose.vpn.yml` 使用固定版本／摘要的 Mihomo v1.19.33，为 ARTEX、ScopeSentry 服务及扫描节点分别提供独立网络命名空间。TUN 接管非代理工具的 TCP／受节点支持的 UDP；防火墙默认阻断直连，VPN 进程退出、节点全部不可用或订阅加载失败不能回退本机出口。客户端不能访问 Docker 的外部 DNS 转发器，业务 DNS 经 VPN 解析；IPv6 默认阻断。数据库、MCP 等只放行固定内部服务的具体 TCP 端口，管理端口的响应沿原连接返回。未把所有私网网段加入直连白名单。
+
+这不是宿主机 VPN：构建／拉取镜像、宿主机程序、外置 MCP、远端会话中运行的程序、其他扫描节点不在本覆盖文件的隔离范围内。仅受信网关可直接拉取订阅、解析节点域名、连接 VPN 节点，这些引导流量不等同于目标测试流量。Clash 订阅只作为节点 provider 加载，忽略其中的规则、DNS、监听及控制面配置，排除 direct／dns／rematch 等出口；空节点组显式使用 REJECT，不能使用内核默认的 COMPATIBLE 直连。
+
+### 配置与启用
+
+先暂停正在运行的任务并备份现有部署配置。要求 Docker Compose 支持 `!reset`（2.24.4 或更新）、Linux Docker 引擎的 `/dev/net/tun`、iptables 及策略路由；macOS 使用 Docker Desktop 的 Linux 虚拟机，不修改 macOS 的全局网络。
+
+```sh
+python3 deploy/vpn/configure.py
+# 在隐藏输入提示里填写 HTTPS Clash 订阅；不要把 URL 作为命令行参数。
+# 可用 --subscription-file <私密文件> 读取；--filter <节点名称正则> 限定节点。
+docker compose -f docker-compose.yml -f docker-compose.vpn.yml up -d --build --wait --wait-timeout 900 artex
+```
+
+配置生成到被 Git 与 Docker 构建上下文忽略的 `.vpn/config.json`（目录 0700，文件 0600），只挂载到网关，不挂载给 ARTEX／扫描工具；脚本不联网、不修改 `.env`、不重启容器，已有配置不会被覆盖。不要把完整订阅或网关私密日志提交到仓库、贴到聊天或写入任务提示词。Mihomo 完整控制 API 仍只使用网关私有 Unix socket，没有发布管理端口；另提供仅查询／选择订阅节点的受限 Unix IPC 给 ARTEX 原生工具，不暴露订阅、节点密码、配置修改、直连开关或防火墙能力。
+
+启用后，在本机 `.env` 增加 `COMPOSE_FILE=docker-compose.yml:docker-compose.vpn.yml`，让原有不带 `-f` 的 Docker Compose 命令也保留 VPN 覆盖。后续重建、启动与停止都必须保留两个 Compose 文件；显式只使用原文件会撤销隔离，不是故障回退方案。管理页面与原宿主端口保持不变。TUN 已覆盖大模型／搜索的直接连接，无需把订阅填进“全局代理”；原有流量录制照常经过 MITM。旧代理地址若指向不可达的宿主服务，应先停任务再清理／调整，不能为它放开外网直连。
+
+VPN 覆盖自动设置 `ARTEX_VPN_LLM_PROXY=http://127.0.0.1:7890`：模型调用、模型配置测试和模型列表获取使用本命名空间的受管 Mihomo，优先于旧模型表单／数据库中的代理地址，不重写已保存模型配置。非 VPN 部署未设置该变量时行为不变；受管代理失效不会回退旧代理或直连。不要为旧的 `host.docker.internal:7890` 任意代理放开内部直连。
+
+大模型接口本身运行在宿主机时，例如 `http://host.docker.internal:3425/v1`，在 `.env` 显式设置 `ARTEX_VPN_INTERNAL_SERVICES=host.docker.internal:3425`。网关启动时解析并登记该名称，只允许这个 IP 的指定 TCP 端口，其他宿主端口仍不豁免；这只放行内部模型中转，宿主中转程序自身的公网出口需单独由宿主 VPN 管理，不属于本覆盖文件的隔离范围。修改后重建网关和依赖它的 ARTEX，不能仅改 DNS 或放开整个宿主／私网网段。
+
+Reqable／企业调试代理截获 Docker TLS 时，把操作系统已经信任的 PEM 根证书复制到 `.vpn/ca/*.crt` 或 `*.pem`，仅挂载到网关。启动时合并系统 CA 到私有 tmpfs 中的 CA bundle，仍完整验证 TLS；缺失／无效 CA、订阅失败仍阻断外网，不能使用 `skip-cert-verify` 或关闭验签作为修复。不要复制私钥或直接信任从错误连接抓到的叶证书。更新 CA 后需重建相应网关；健康状态仍不代表订阅已加载，应检查节点列表。
+
+更换订阅时先停止任务，将旧配置显式移到安全位置，再重新生成；重建三个网关及依赖它们的工作容器，不能只移走网关的网络命名空间。数据库地址改变也需要重建相应网关，以重新核验内部服务地址。启用前额外挂入 ARTEX／扫描容器的靶场网络不会自动迁移；当前覆盖文件没有授权任意实验网段，靶场需另行适配，不要沿用原接网脚本绕过隔离。
+
+### 节点切换与边界
+
+需要与已验证的本机 ClashX 配置对齐时，使用 `python3 deploy/vpn/sync-clash.py <Clash YAML 文件>` 显式导入节点快照。解析离线运行于 Docker Go 工具链，需已有 `golang:1.26-bookworm` 镜像及本机 Go 缓存；不读取／导入原配置的直连规则、DNS、控制面与角色权限，不输出节点凭据，不修改源文件。原 VPN 配置只首次备份到私密 `.vpn/config.before-clash-sync.json`；快照保存在 `.vpn/clash-nodes.json`，改用 file provider，启动时复制到网关私有目录。此模式是固定快照，**不会再由原 HTTP 订阅每天覆盖节点入口**；ClashX 更新后需再次同步并重建三个网关和依赖容器。HTTP 订阅模式仍是默认；回到该模式需显式恢复备份，不默默切换来源。
+
+订阅每天刷新，节点健康检查默认每 60 秒一次，连接故障会触发健康检查并选用首个可用节点；切换影响新连接，不会迁移既有连接，不保证不同节点对应不同公网 IP。三个组件分别选择出口，但同一个 ARTEX 内的多个任务及模型调用仍共享其节点组，当前没有按任务分配节点或出口 IP 核验。Agent 可以通过下方受限工具主动选择其他订阅节点，节点故障自动兜底仍独立生效。
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.vpn.yml exec -T vpn-artex python3 /opt/vpn/runtime.py status
+```
+
+健康表示 TUN／防火墙／本地控制面就绪，不表示订阅可用或目标可访问。所有节点失效时管理页面仍可查看，但外网请求失败。系统不检查目标响应，不根据 403／429、验证码或其他任务错误判定是否被墙、被封 IP；是否因路线问题需要换节点由执行中的 Agent 根据证据自主决定，仍遵守原任务授权与限速，不自动重放可能有副作用的请求。
+
+### Agent 自主切换节点：原生工具 + skill
+
+`vpn_status` 查询指定组件的当前节点、订阅候选及节点健康状态；`vpn_switch_node` 接受候选 `node`、最新 `expected_current` 和 Agent 说明的 `reason`，在当前运行任务上下文内切换，不需要系统先产生“被墙”标记，也没有新增逐次人工批准步骤；既有 Guard、工具关闭／解绑仍有效。两项工具默认绑定 planner／mainagent／worker／pentest；`vpn-routing` skill 默认对这些角色可见，按实际可用工具注入恢复指引，用户后续关闭和编辑不会被启动覆盖。不是新增 MCP 服务，也不把完整 Clash API 交给 Agent。
+
+组件参数 `component` 默认 `artex`，用于本地 Bash／WebFetch／浏览器；`scopesentry_scan` 只影响扫描节点，`scopesentry` 只影响服务端外网请求，不能混用。覆盖文件自动挂载三个独立的受限 IPC，并设置 `ARTEX_VPN_CONTROL_DIR=/app/vpn-control`；非 VPN 部署未设置该路径时不向 Agent 暴露 VPN 工具。更新需要构建新的 ARTEX 和网关镜像，不是只挂载 skill 即可。
+
+Agent 的流程：根据实际执行失败评估路线问题 → `vpn_status` → 选一个尚未尝试的候选并调用 `vpn_switch_node` → 新建连接验证原授权操作。工具不探测目标、不解释 reason、不检测封禁、不自动验证出口 IP；返回的 `changed` 只证明选中节点发生变化。切换记录经过现有工具调用／Activity 留痕，任务 ID 来自运行上下文，不允许模型传入其他任务 ID；暂停、排队、完成、未启动及取消上下文不能切换。受限 IPC 只保证可选择订阅节点，任务身份／生命周期由 ARTEX 原生入口校验；不得在 Bash 中直接访问 IPC 绕过工具管理。
+
+选择使用 `expected_current` 做并发冲突检查，并在同一组件设置 30 秒切换冷却，防止多个 Agent 相互覆盖或反复抖动；失联导致结果不明时先查状态，不盲目重发。冷却与冲突是控制操作保护，不是“被墙”判定。skill 指导同一恢复方向尝试三个不同节点仍失败时记录阻塞证据、停止该步骤并继续独立授权工作；不把换节点成功等同于网站访问恢复，也不为排障恢复直连。
+
+`vpn_status` 的 `health_check` 显示实际 HEAD 探测地址、期望状态及 `configured_endpoint_only` 口径；候选显示最近 `checked_at` 和成功探测耗时。只使用对应探测地址的已完成记录，其他地址的全局 alive 标志和启动默认值不能冒充健康。`unhealthy` 表示本次标准探测失败，不代表所有站点都不可用；端口 TCP 可连也不证明代理握手／TLS／目标请求成功。是否任务被墙仍由 Agent 判断，不按这些状态自动分类任务。
+
+工作容器移除 NET_ADMIN、NET_RAW、SETUID 等权限，只保留访问已有挂载文件所需的 DAC_OVERRIDE／FOWNER；因此 SYN／原始包扫描、部分 ping／提权工具不能沿用原权限，TCP connect 扫描及普通 HTTP／UDP 按节点实际能力使用。VPN 故障时不为这些工具恢复直连或额外权限。新增任意监听也不能隐式开放，默认只允许原管理端口入站。
+
+配置／受限控制测试：`python3 -m unittest discover -s tests/vpn -p 'test_*.py' -v`。原生工具／运行上下文／角色指引竞态测试：`sh tests/vpn/run-go-tests.sh`，使用 Go overlay，新增测试仍保存在 `tests/vpn/`，不操作现有任务数据库。隔离传输测试：`python3 tests/vpn/run.py`，使用独立 Compose 项目、两个本地受限 SOCKS 测试出口及内部金丝雀，包含健康节点主动切换、非法控制／并发／冷却边界和断网兜底；无真实订阅、外网目标、LLM 或浏览器，结束清理测试容器与网络，不修改现有部署。真实订阅的协议兼容性、出口 IP 与目标授权仍需启用后核验。
+
 ## 根据 Base URL 选择模型
 
 「系统 → 大模型配置」的新建／编辑表单在填写 Base URL 后自动获取模型列表；需鉴权的接口填写 API Key 后会重新获取，编辑配置时 Key 留空沿用已保存的 Key。支持 OpenAI、Responses 和 Anthropic 兼容接口，以及无需鉴权的模型列表；可填写根地址、`/v1` 前缀或完整接口地址。留空 Base URL 时使用所选格式的官方地址，需要 API Key。

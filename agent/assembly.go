@@ -16,6 +16,7 @@ import (
 // UnlockSkill unlocks a named skill's MCPs — hosts call it to rebuild the unlock set
 // from history on a resumed session (design doc C2).
 type DeferredInfo struct {
+	VPNGuidance     string            // Agent-owned routing recovery; only when both VPN tools survived filtering
 	FindingGuidance string            // derived from the final permitted tools, including DB overrides
 	SkillNames      []string          // registered names of this agent's visible skills
 	SkillGuidance   string            // scenario guidance derived after tool filtering
@@ -70,6 +71,7 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 		toolNames = append(toolNames, t.Name())
 		hasSkill = hasSkill || t.Name() == "Skill"
 	}
+	def.VPNGuidance = VPNRoutingGuidance(toolNames)
 	if hasSkill {
 		def.SkillGuidance = SkillLoadingGuidance(agentKey, def.SkillNames, toolNames)
 	}

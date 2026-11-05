@@ -1,0 +1,76 @@
+package agent
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/Autumn-27/norma/skill"
+	actool "github.com/Autumn-27/norma/tool"
+)
+
+func TestVPNGuidanceFollowsFinalBindings(t *testing.T) {
+	oldAugment, oldResolve := ToolAugment, ToolResolve
+	t.Cleanup(func() { ToolAugment, ToolResolve = oldAugment, oldResolve })
+	ToolAugment = nil
+	status := actool.Build(actool.Spec{Name: "vpn_status", Schema: map[string]any{"type": "object"}})
+	switcher := actool.Build(actool.Spec{Name: "vpn_switch_node", Schema: map[string]any{"type": "object"}})
+	for _, enabled := range []bool{false, true} {
+		ToolResolve = func(_ context.Context, _ string, tools []actool.CoreTool) []actool.CoreTool {
+			if enabled {
+				return tools
+			}
+			return tools[:1]
+		}
+		_, def, cleanup := AugmentTools(t.Context(), "worker", []actool.CoreTool{status, switcher})
+		cleanup()
+		if (def.VPNGuidance != "") != enabled {
+			t.Fatal("guidance ignores binding/disable")
+		}
+		segments, _ := deferredSystem("edited prompt", def)
+		if enabled && (!strings.Contains(segments[0], "system does not detect") || !strings.Contains(segments[0], "vpn_switch_node")) {
+			t.Fatal("existing prompt lacks autonomous recovery guidance")
+		}
+		if !enabled && strings.Contains(segments[0], "vpn_switch_node") {
+			t.Fatal("disabled switch advertised")
+		}
+	}
+}
+
+func TestVPNManagedLLMProxyOverridesLegacy(t *testing.T) {
+	t.Setenv("ARTEX_VPN_LLM_PROXY", "http://127.0.0.1:7890")
+	client, err := quotaAwareHTTPClient("http://host.docker.internal:7890", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := client.Transport.(quotaAwareTransport).base.(*http.Transport)
+	request, _ := http.NewRequest(http.MethodGet, "https://model.invalid/v1/models", nil)
+	proxy, err := transport.Proxy(request)
+	if err != nil || proxy.Host != "127.0.0.1:7890" {
+		t.Fatalf("proxy=%v err=%v", proxy, err)
+	}
+	t.Setenv("ARTEX_VPN_LLM_PROXY", "invalid://managed")
+	if _, err := quotaAwareHTTPClient("http://old-proxy:7890", ""); err == nil {
+		t.Fatal("invalid managed proxy fell back")
+	}
+	t.Setenv("ARTEX_VPN_LLM_PROXY", "")
+	if EffectiveLLMProxy("http://old-proxy:7890") != "http://old-proxy:7890" {
+		t.Fatal("non-VPN proxy changed")
+	}
+}
+
+func TestVPNSkillIsLoadable(t *testing.T) {
+	registry, err := skill.LoadDir("../skills")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, ok := registry.Get("vpn-routing")
+	if !ok || loaded.Description == "" || len(loaded.MCPs) != 0 {
+		t.Fatal("native VPN skill is missing or unnecessarily MCP-gated")
+	}
+	guidance := SkillLoadingGuidance("worker", []string{"vpn-routing"}, []string{"vpn_status", "vpn_switch_node"})
+	if !strings.Contains(guidance, "vpn-routing") {
+		t.Fatal("visible VPN skill not discoverable")
+	}
+}

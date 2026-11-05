@@ -2082,7 +2082,7 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	transport := &http.Transport{}
 	defer transport.CloseIdleConnections()
-	if p := strings.TrimSpace(req.Proxy); p != "" {
+	if p := agent.EffectiveLLMProxy(req.Proxy); p != "" {
 		pu, err := url.Parse(p)
 		if err != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https" && pu.Scheme != "socks5" && pu.Scheme != "socks5h") {
 			writeJSON(w, 200, map[string]any{"ok": false, "error": "代理必须是有效的 HTTP/HTTPS/SOCKS5 地址"})

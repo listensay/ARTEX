@@ -18,6 +18,7 @@ import (
 func deferredSystem(sysText string, def DeferredInfo) (system []string, boundary int) {
 	sysText += def.FindingGuidance
 	sysText += def.SkillGuidance
+	sysText += def.VPNGuidance
 	block := actool.RenderDeferredToolsBlock(def.GlobalNames)
 	if block == "" {
 		return []string{sysText}, 0

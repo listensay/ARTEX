@@ -278,6 +278,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		s.seedTunnelTools()
 		s.seedStageShareTool()
 		s.seedScopeSentryLinkTools()
+		s.seedVPNTools()
 		s.seedOrchestrationTools() // P2 跨任务编排工具 seed 进 tools 表(可按 agent 绑定)
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)

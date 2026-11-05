@@ -35,6 +35,7 @@ func SkillLoadingGuidance(agentKey string, names, toolNames []string) string {
 	add("chains-rev", "首次进行程序静态/动态逆向、混淆还原或算法分析前加载。")
 	add("api-recon", "目标是收集网站 API、请求方法/参数、前端路由或 UI 触发点时，首次运行接口采集前加载并遵守复制、适配与阶段门禁；普通页面浏览不必加载。")
 	add("artex-toolkit", "首次选用本机预装 CLI、核对路径/参数，或操作受管会话、隧道、凭据、文件分发前加载。")
+	add("vpn-routing", "执行证据表明当前授权任务可能受出口／网络阻断影响、准备自主切换 VPN 节点时加载；系统不判断是否被墙。只调用实际可用的 VPN 工具，不改直连或防火墙策略。")
 	add("playwright-cli", "明确采用 Playwright CLI、需要浏览器脚本或 CLI 会话时，首次打开 CLI 浏览器前加载；普通交互可直接使用已绑定的 browser MCP，不为加载该技能另开重复会话。")
 	if visible["scopesentry"] {
 		hasMCP := false

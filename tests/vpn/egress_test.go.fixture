@@ -1,0 +1,25 @@
+package guard
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestVPNEgressReasonCannotLeakSecret(t *testing.T) {
+	const secret = "synthetic-vpn-sensitive-material"
+	egress := NewEgressGuard()
+	egress.AddFingerprint("test", secret)
+	g := New()
+	g.SetEgress(egress)
+	input, _ := json.Marshal(map[string]string{"node": "candidate", "expected_current": "old", "reason": secret})
+	blocked, message, _ := g.Hooks().PreToolUse(t.Context(), "vpn_switch_node", input)
+	if !blocked || strings.Contains(message, secret) {
+		t.Fatal("VPN reason did not safely block sensitive material")
+	}
+	for _, entry := range g.Audit() {
+		if strings.Contains(entry.Command, secret) || strings.Contains(entry.Reason, secret) {
+			t.Fatal("VPN reason leaked into guard audit")
+		}
+	}
+}
