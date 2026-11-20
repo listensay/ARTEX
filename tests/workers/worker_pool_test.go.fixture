@@ -1,0 +1,255 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Autumn-27/artex/agent"
+	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/norma/llm"
+)
+
+type workerPoolCall struct {
+	intentID int64
+	release  chan struct{}
+}
+
+func workerPoolFixture(t *testing.T, count int) (*Server, chan workerPoolCall, *atomic.Int64) {
+	t.Helper()
+	dsn, _, err := db.DSN()
+	if err != nil {
+		t.Fatal("worker pool tests require an isolated test database")
+	}
+	pg, err := db.Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var database string
+	if err := pg.QueryRow(`SELECT current_database()`).Scan(&database); err != nil || !strings.HasPrefix(database, "artex_worker_tests_") {
+		t.Fatal("worker pool tests refuse non-test databases")
+	}
+	m := &Manager{pg: pg, dir: t.TempDir(), assets: pg.Assets(), tasks: map[string]*Task{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Server{m: m, ctx: ctx, engine: NewEngine(m)}
+	calls := make(chan workerPoolCall, 32)
+	canceled := &atomic.Int64{}
+	provider := retestProvider{complete: func(ctx context.Context, _ llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
+		call := workerPoolCall{intentID: agent.RunInfoFrom(ctx).IntentID, release: make(chan struct{})}
+		calls <- call
+		select {
+		case <-ctx.Done():
+			canceled.Add(1)
+			return llm.Message{}, "", llm.Usage{}, ctx.Err()
+		case <-call.release:
+			return llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.TextBlock("Isolated fixture completed")}}, "end_turn", llm.Usage{}, nil
+		}
+	}}
+	worker := agent.NewWorker(provider, "fixture", m.dir, nil, 0, 2)
+	worker.SetNonStreaming(func() bool { return true })
+	s.engine.SetAuthoritativeAgentResolver(func(*Task) (*agent.Planner, *agent.Worker) { return nil, worker })
+	if err := m.SetWorkers(count); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		s.engine.Close()
+		pg.Close()
+	})
+	return s, calls, canceled
+}
+
+func workerPoolTask(t *testing.T, s *Server, count int) *Task {
+	t.Helper()
+	task, err := s.m.CreateTask("isolated worker fixture", "complete fixture intents", nil, 0, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < count; i++ {
+		if _, err := task.Store.AddNode(db.KindIntent, map[string]any{"summary": fmt.Sprintf("fixture %d", i)}, 5, "open", "fixture", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return task
+}
+
+func workerPoolReceive(t *testing.T, calls <-chan workerPoolCall) workerPoolCall {
+	t.Helper()
+	select {
+	case call := <-calls:
+		return call
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not execute an intent")
+		return workerPoolCall{}
+	}
+}
+
+func workerPoolNoCall(t *testing.T, calls <-chan workerPoolCall) {
+	t.Helper()
+	select {
+	case call := <-calls:
+		t.Fatalf("unexpected extra execution for intent %d", call.intentID)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func workerPoolWait(t *testing.T, check func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if check() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("worker state did not converge")
+}
+
+func workerPoolSave(t *testing.T, s *Server, count int) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.putSettings(w, httptest.NewRequest("PUT", "/api/settings", strings.NewReader(fmt.Sprintf(`{"workers":%d}`, count))))
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 200 || body["workers"] != float64(count) {
+		t.Fatalf("save workers: status=%d body=%s err=%v", w.Code, w.Body, err)
+	}
+}
+
+func TestWorkerPoolSettingsResize(t *testing.T) {
+	s, calls, canceled := workerPoolFixture(t, 2)
+	task := workerPoolTask(t, s, 7)
+	s.engine.Run(s.ctx, task)
+	first := []workerPoolCall{workerPoolReceive(t, calls), workerPoolReceive(t, calls)}
+	workerPoolNoCall(t, calls)
+	workerPoolSave(t, s, 4)
+	first = append(first, workerPoolReceive(t, calls), workerPoolReceive(t, calls))
+	if limit := s.engine.WorkerLimit(task.ID); limit != 4 {
+		t.Fatalf("running task limit=%d, want 4", limit)
+	}
+	workerPoolNoCall(t, calls)
+	workerPoolSave(t, s, 1)
+	if limit := s.engine.WorkerLimit(task.ID); limit != 1 || canceled.Load() != 0 {
+		t.Fatalf("downsize canceled work or kept old capacity: limit=%d canceled=%d", limit, canceled.Load())
+	}
+	// Complete retiring slots first: none may claim another queued intent.
+	var retained workerPoolCall
+	for _, call := range first {
+		node, err := task.Store.GetNode(call.intentID)
+		if err != nil || node == nil {
+			t.Fatal(err)
+		}
+		if node.Owner == "work#1" {
+			retained = call
+		} else {
+			close(call.release)
+		}
+	}
+	workerPoolWait(t, func() bool { return s.engine.inflightCount(task.ID) == 1 })
+	workerPoolNoCall(t, calls)
+	close(retained.release)
+	seen := map[int64]bool{}
+	for _, call := range first {
+		seen[call.intentID] = true
+	}
+	for i := 0; i < 3; i++ {
+		call := workerPoolReceive(t, calls)
+		if seen[call.intentID] {
+			t.Fatalf("duplicate execution for %d", call.intentID)
+		}
+		seen[call.intentID] = true
+		node, _ := task.Store.GetNode(call.intentID)
+		if node.Owner != "work#1" {
+			t.Fatalf("retired slot claimed new work: %s", node.Owner)
+		}
+		close(call.release)
+	}
+	workerPoolWait(t, func() bool {
+		nodes, _ := task.Store.ListByKind(db.KindIntent, 20)
+		for _, node := range nodes {
+			if node.State != "done" {
+				return false
+			}
+		}
+		return len(nodes) == 7
+	})
+	s.engine.Run(s.ctx, task)
+	if s.engine.WorkerLimit(task.ID) != 1 {
+		t.Fatal("repeated Run duplicated workers")
+	}
+	newTask := workerPoolTask(t, s, 2)
+	s.engine.Run(s.ctx, newTask)
+	call := workerPoolReceive(t, calls)
+	workerPoolNoCall(t, calls)
+	close(call.release)
+	close(workerPoolReceive(t, calls).release)
+	w := httptest.NewRecorder()
+	s.putSettings(w, httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"workers":0}`)))
+	if w.Code != 400 || s.m.Workers() != 1 || s.engine.WorkerLimit(task.ID) != 1 {
+		t.Fatal("invalid count changed configuration or pool")
+	}
+}
+
+func TestWorkerPoolPauseAndDelete(t *testing.T) {
+	s, calls, canceled := workerPoolFixture(t, 2)
+	task := workerPoolTask(t, s, 4)
+	s.engine.Run(s.ctx, task)
+	workerPoolReceive(t, calls)
+	workerPoolReceive(t, calls)
+	s.engine.Pause(task.ID, agent.AbortPausedByUser)
+	workerPoolWait(t, func() bool { return canceled.Load() == 2 && s.engine.inflightCount(task.ID) == 0 })
+	workerPoolSave(t, s, 4)
+	if !s.engine.IsPaused(task.ID) {
+		t.Fatal("resize resumed a paused task")
+	}
+	workerPoolNoCall(t, calls)
+	s.engine.Resume(task)
+	for i := 0; i < 4; i++ {
+		workerPoolReceive(t, calls)
+	}
+	if !s.engine.BeginDelete(task.ID) {
+		t.Fatal("delete barrier not installed")
+	}
+	workerPoolSave(t, s, 5)
+	if s.engine.WorkerLimit(task.ID) != 4 {
+		t.Fatal("resize created workers after delete barrier")
+	}
+	s.engine.StopTask(task.ID)
+	if s.engine.Started(task.ID) || s.engine.WorkerLimit(task.ID) != 0 || s.engine.inflightCount(task.ID) != 0 {
+		t.Fatal("deleted task retained workers or operations")
+	}
+	workerPoolNoCall(t, calls)
+}
+
+func TestWorkerPoolConcurrentResizeAndClose(t *testing.T) {
+	s, _, _ := workerPoolFixture(t, 2)
+	task := workerPoolTask(t, s, 0)
+	s.engine.Pause(task.ID, agent.AbortPausedByUser)
+	s.engine.Run(s.ctx, task)
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Go(func() {
+			for j := 0; j < 12; j++ {
+				if err := s.m.SetWorkers(j%4 + 1); err != nil {
+					t.Error(err)
+					return
+				}
+				s.engine.RefreshWorkers()
+				s.engine.Run(s.ctx, task)
+			}
+		})
+	}
+	wg.Go(s.engine.Close)
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("resize/shutdown deadlocked")
+	}
+}

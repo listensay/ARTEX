@@ -16,6 +16,10 @@ import time
 
 from configure import MARK, TUN_DEVICE
 
+INTERNAL_IPV4_NETWORKS = tuple(ipaddress.IPv4Network(cidr) for cidr in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+))
+
 
 def ca_bundle(directory=Path("/vpn/ca"), system_bundle=None):
     if system_bundle is None:
@@ -73,6 +77,12 @@ def resolve_internal(host):
         pos += length
     if not ips:
         raise ValueError("No internal IPv4 address")
+    # is_private also includes benchmark/fake-IP, loopback and reserved ranges.
+    # Docker may briefly forward a missing service name to a host-side proxy
+    # during startup; retry that answer instead of pinning it into hosts/routes.
+    if any(not any(ipaddress.IPv4Address(ip) in network for network in INTERNAL_IPV4_NETWORKS)
+           for ip in ips):
+        raise ValueError("Internal services must resolve to RFC1918 IPv4 addresses")
     return ips
 
 
@@ -88,6 +98,18 @@ def prepare():
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         destination.write_text(json.dumps(nodes, ensure_ascii=False))
     hosts, rules, excluded = {}, [], []
+    if any(p.get("name") == "ARTEX-HOST-TRANSPORT" and p.get("server") == "host.docker.internal"
+           for p in config.get("proxies", [])):
+        for attempt in range(10):
+            try:
+                hosts["host.docker.internal"] = resolve_internal("host.docker.internal")
+                break
+            except (OSError, ValueError, IndexError, struct.error):
+                if attempt == 9:
+                    raise ValueError("Host node transport resolution failed") from None
+                time.sleep(1)
+        # Only marked Mihomo node handshakes may reach this host service. It
+        # does not become an internal-service DIRECT rule for workload traffic.
     for entry in os.environ.get("VPN_INTERNAL_SERVICES", "").split():
         host, port = entry.split(":")
         port = int(port)
@@ -104,9 +126,6 @@ def prepare():
         hosts[host] = ips
         rules.append(f"AND,((DOMAIN,{host}),(DST-PORT,{port})),DIRECT")
         for ip in ips:
-            address = ipaddress.IPv4Address(ip)
-            if not address.is_private or address.is_unspecified or address.is_multicast:
-                raise ValueError("Internal services must resolve to private IPv4 addresses")
             subprocess.run([
                 "iptables", "-w", "-A", "OUTPUT", "-d", ip, "-p", "tcp",
                 "--dport", str(port), "-j", "ACCEPT",

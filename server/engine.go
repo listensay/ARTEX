@@ -165,6 +165,10 @@ type taskRuntime struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	workerMu   sync.Mutex // serializes pool resizing with intent claims
+	workers    []*taskWorker
+	nextWorker int
 }
 
 type workExecution struct {
@@ -802,26 +806,29 @@ func (e *Engine) ReadyFor(t *Task) bool {
 // but no-op until an LLM is configured (so a task created while idle picks up
 // automatically once LLM is set from the UI).
 func (e *Engine) Run(ctx context.Context, t *Task) {
-	workers := e.m.Workers()
 	e.deleteMu.RLock()
 	if e.IsDeleting(t.ID) {
 		e.deleteMu.RUnlock()
 		return
 	}
 	if _, loaded := e.started.LoadOrStore(t.ID, true); loaded {
+		e.runtimeMu.Lock()
+		if rt := e.runtimes[t.ID]; rt != nil {
+			e.syncTaskWorkersLocked(t, rt, e.m.Workers())
+		}
+		e.runtimeMu.Unlock()
 		e.deleteMu.RUnlock()
 		t.Notify() // already running — just nudge a planning round
 		return
 	}
-	rt := e.registerTaskRoutines(ctx, t.ID, 2+workers)
+	rt := e.registerTaskRoutines(ctx, t.ID, 2)
+	e.runtimeMu.Lock()
+	e.syncTaskWorkersLocked(t, rt, e.m.Workers())
+	e.runtimeMu.Unlock()
 	e.deleteMu.RUnlock()
 	e.touch(t.ID)
 	runTaskRoutine(rt, func(loopCtx context.Context) { e.plannerLoop(loopCtx, t) })
 	runTaskRoutine(rt, func(loopCtx context.Context) { e.intentWatchdog(loopCtx, t) })
-	for i := 0; i < workers; i++ {
-		name := fmt.Sprintf("work#%d", i+1)
-		runTaskRoutine(rt, func(loopCtx context.Context) { e.workerLoop(loopCtx, t, name) })
-	}
 	e.startDeadlineCoordinator(ctx, t) // 任务级超时定时器(仅 timeout>0;去重)
 	// 仅在「完全没有活动意图(open+running)」时才 kick 首轮规划。带种子意图的任务:种子已
 	// 是 open,或已被上面刚起的 worker 抢先 claim 成 running——两种都算「有活干」,一律跳过
@@ -940,6 +947,7 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		}
 		taskIDInt, _ := strconv.ParseInt(t.ID, 10, 64)
 		e.BeginLLMCall(t.ID)
+		ectx = agent.WithWorkerConcurrency(ectx, e.WorkerLimit(t.ID))
 		met, reason, err := planner.Plan(ectx, taskIDInt, e.m.assets, t.Store, t.Goal, triggers, emit)
 		e.EndLLMCall(t.ID)
 		switch {
@@ -976,8 +984,11 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 	}
 }
 
-func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
+func (e *Engine) workerLoop(ctx context.Context, t *Task, slot *taskWorker) {
 	for {
+		if slot.retiring.Load() {
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -1014,7 +1025,7 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 		if !e.beginTaskOperation(t.ID) {
 			return
 		}
-		claimed := e.runWorkerStep(ctx, t, name, worker)
+		claimed := e.runWorkerStep(ctx, t, slot, worker)
 		e.decInflight(t.ID)
 		if !claimed && sleepCtx(ctx, 800*time.Millisecond) {
 			return
@@ -1025,13 +1036,21 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 // runWorkerStep claims one intent from the frontier and fully settles it via
 // runIntent. Returns false when nothing was claimable. The pool worker loop is its
 // only caller.
-func (e *Engine) runWorkerStep(ctx context.Context, t *Task, name string, worker *agent.Worker) bool {
-	intent := e.claimNext(t, name)
+func (e *Engine) runWorkerStep(ctx context.Context, t *Task, slot *taskWorker, worker *agent.Worker) bool {
+	// A downsize must prevent a retiring slot from claiming another intent, while
+	// allowing its current run to finish without cancellation.
+	slot.runtime.workerMu.Lock()
+	if slot.retiring.Load() {
+		slot.runtime.workerMu.Unlock()
+		return false
+	}
+	intent := e.claimNext(t, slot.name)
+	slot.runtime.workerMu.Unlock()
 	if intent == nil {
 		return false
 	}
-	log.Printf("[worker %s] task %s 领取意图 #%d", name, t.ID, intent.ID)
-	return e.runIntent(ctx, t, name, worker, intent, "", "")
+	log.Printf("[worker %s] task %s 领取意图 #%d", slot.name, t.ID, intent.ID)
+	return e.runIntent(ctx, t, slot.name, worker, intent, "", "")
 }
 
 // runIntent executes and fully settles one already-claimed (state=running) intent.

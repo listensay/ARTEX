@@ -329,7 +329,7 @@ func (m *Manager) SetConcurrency(enabled bool, limit int) error {
 }
 
 // Workers returns the configured concurrent work-agent count (default 3). Read
-// per-task at engine.Run, so a change applies to tasks started afterwards.
+// at engine.Run and when the server refreshes existing task pools after a save.
 func (m *Manager) Workers() int {
 	v, ok, err := m.pg.GetSetting(settingWorkers)
 	if err != nil || !ok {

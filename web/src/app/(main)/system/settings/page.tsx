@@ -74,7 +74,7 @@ export default function SystemSettingsPage() {
       .setSettings({ workers: n })
       .then((s) => {
         apply(s);
-        toast.success("已保存并发工作 agent 数（对之后启动的任务生效）");
+        toast.success("已更新每个任务的工作并发上限");
       })
       .catch((e) => toast.error("保存失败：" + (e as Error).message))
       .finally(() => setSavingWorkers(false));
@@ -657,8 +657,9 @@ export default function SystemSettingsPage() {
               工作并发 · Work Agent 数
             </CardTitle>
             <CardDescription>
-              每个任务并发运行的工作 agent 数量（默认 3）。数值越大并发探测越多、消耗也越高。修改后
-              <b>对之后启动的任务生效</b>，正在运行的任务不受影响。
+              每个任务同时执行意图的工作 agent 上限（默认 3）。保存后
+              <b>对运行中的任务生效</b>；减少时，多余 agent 完成当前意图后退出。实际并发取决于可执行的
+              独立意图数量，没有待执行意图时 agent 会等待规划者派发。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">

@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from host_bridge import bridge_configuration, enable_bridge
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -28,6 +30,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("--directory", type=Path, default=ROOT / ".vpn")
+    parser.add_argument("--host-bridge", action="store_true",
+                        help="Use a fixed-node macOS transport when ClashX TUN also intercepts Docker")
     args = parser.parse_args()
     try:
         if args.source.is_symlink() or args.directory.is_symlink():
@@ -57,11 +61,19 @@ def main():
         provider.update(type="file", path="providers/clash-local.json", interval=60)
         for key in ["url", "proxy", "header", "size-limit"]:
             provider.pop(key, None)
+        bridge_path = args.directory / "host-bridge.json"
+        if args.host_bridge or bridge_path.exists():
+            previous = json.loads(bridge_path.read_text()) if bridge_path.exists() else None
+            bridge = bridge_configuration(nodes["proxies"], previous)
+            enable_bridge(config, bridge)
+            atomic_write(bridge_path, json.dumps(bridge, ensure_ascii=False, indent=2).encode("utf-8"))
         atomic_write(args.directory / "clash-nodes.json",
                      json.dumps(nodes, ensure_ascii=False).encode("utf-8"))
         atomic_write(config_path, json.dumps(config, ensure_ascii=False, indent=2).encode("utf-8"))
         print(f"Synced {len(nodes['proxies'])} private nodes. Source file unchanged.")
         print("This is a pinned snapshot; resync after Clash updates. Recreate VPN gateways and their clients.")
+        if bridge_path.exists():
+            print("Host transport enabled; install/reload it with host_bridge.py install before starting gateways.")
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         parser.exit(1, "Clash sync failed. Check source, private config and offline Go image/cache.\n")
 

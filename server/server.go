@@ -1116,6 +1116,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		"paused":        paused,
 		"engine_mode":   engineMode,
 		"in_flight":     inFlight,
+		"worker_limit":  s.engine.WorkerLimit(t.ID),
 		"llm_in_flight": activeCalls,
 		"last_activity": last,
 		"stalled":       stalled,
@@ -3397,7 +3398,7 @@ func (s *Server) settingsPayload() map[string]any {
 		"web_search_proxy":         proxy,                       // 独立出口代理(http/https/socks5)，空=直连
 		"global_proxy":             s.m.GlobalProxy(),           // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
 		"python_interpreter":       strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
-		"workers":                  s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
+		"workers":                  s.m.Workers(),               // 每任务并发工作 agent 上限(默认3)；保存后更新运行中的池
 		"task_concurrency_enabled": concOn,                      // 任务并发上限开关(默认关)
 		"task_concurrency_limit":   concLimit,                   // 同时运行任务上限(开启后默认5)
 		// LLM 轮询(故障转移)。默认关；开启后走全局激活配置的 agent 在当前配置不可用时
@@ -3473,7 +3474,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		WebSearchProxy   *string `json:"web_search_proxy"`   // 独立出口代理(http/https/socks5)；null=不改，""=清空
 		GlobalProxy      *string `json:"global_proxy"`       // 全局出口代理(http/https/socks5)；null=不改，""=清空(直连)
 		PythonInterp     *string `json:"python_interpreter"` // 自定义脚本工具的 python 解释器路径
-		Workers          *int    `json:"workers"`            // 并发工作 agent 数(>0)；对之后启动的任务生效
+		Workers          *int    `json:"workers"`            // 每任务并发工作 agent 上限(>0)；保存后更新运行中的池
 		// 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
 		ConcurrencyEnabled *bool `json:"task_concurrency_enabled"`
 		ConcurrencyLimit   *int  `json:"task_concurrency_limit"`
@@ -3592,6 +3593,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, err.Error())
 			return
 		}
+		s.engine.RefreshWorkers()
 	}
 	if req.ConcurrencyEnabled != nil || req.ConcurrencyLimit != nil {
 		// 部分 PUT:未给的字段用当前值兜底,避免只改一个把另一个重置。

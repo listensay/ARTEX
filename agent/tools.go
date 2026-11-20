@@ -57,13 +57,14 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 // ToolSet exposes the PG-backed dual graph (asset + exploration) to an LLM agent.
 // One ToolSet is created per planner/worker run; per-run signals live here.
 type ToolSet struct {
-	findingRecorder FindingRecorder
-	as              *db.AssetStore   // asset store (optional; nil = asset tools not available)
-	cs              *db.CompanyStore // company store (optional)
-	ts              *db.ExplorationStore
-	maxOpenIntents  int // set only for planner runs; human direct injection remains available
-	worker          string
-	taskID          int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
+	findingRecorder   FindingRecorder
+	as                *db.AssetStore   // asset store (optional; nil = asset tools not available)
+	cs                *db.CompanyStore // company store (optional)
+	ts                *db.ExplorationStore
+	maxOpenIntents    int // set only for planner runs; human direct injection remains available
+	workerConcurrency int // task pool capacity supplied to this planning round
+	worker            string
+	taskID            int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the
 	// DB default (true). When true: graphOverviewData drops the coverage block, the
@@ -443,6 +444,13 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		out["frontier_open"] = fo
 	} else {
 		out["frontier_open"] = len(fr)
+	}
+	if t.workerConcurrency > 0 {
+		queued := out["frontier_open"].(int)
+		out["worker_capacity"] = map[string]int{
+			"limit": t.workerConcurrency, "running": len(running), "queued": queued,
+			"available": max(0, t.workerConcurrency-len(running)-queued),
+		}
 	}
 	// findings (confirmed vulns) and facts (worker exploration results) are
 	// now distinct node kinds. recent_facts surfaces fact summaries (esp.

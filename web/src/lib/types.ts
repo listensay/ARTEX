@@ -23,6 +23,7 @@ export interface Task {
   queued?: boolean;
   active?: boolean;
   in_flight?: number;
+  worker_limit?: number; // 当前任务允许领取新意图的工作并发槽位
   findings?: { critical: number; high: number; medium: number; low: number }; // 已登记漏洞数(按严重度分档)
   last_activity?: string;
   stalled?: boolean;
@@ -953,7 +954,7 @@ export interface Settings {
   // MITM 上游；关闭捕获时直接注入 agent 的 bash/WebFetch。空=直连。
   global_proxy?: string;
   python_interpreter?: string; // 自定义脚本工具的 python 解释器路径(空=运行时检测)
-  workers?: number; // 并发工作 agent 数(默认3)；对之后启动的任务生效
+  workers?: number; // 每任务工作 agent 并发上限(默认3)；保存后更新运行中的池
   // 任务并发上限:同时「运行中」的任务数上限。关闭=不限;开启后新建任务超限则排队,有空位自动启动。
   task_concurrency_enabled?: boolean; // 默认 false
   task_concurrency_limit?: number; // 开启后默认 5

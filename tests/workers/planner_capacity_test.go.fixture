@@ -1,0 +1,82 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"iter"
+	"strings"
+	"testing"
+
+	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/norma/llm"
+)
+
+type workerCapacityProvider struct{ request llm.CompletionRequest }
+
+func (p *workerCapacityProvider) Complete(_ context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
+	p.request = req
+	return llm.Message{Role: llm.RoleAssistant, Content: []llm.ContentBlock{llm.TextBlock("fixture")}}, "end_turn", llm.Usage{}, nil
+}
+func (*workerCapacityProvider) Stream(context.Context, llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
+	return func(y func(llm.StreamEvent, error) bool) { y(llm.StreamEvent{}, errors.New("use non-streaming")) }
+}
+
+func TestWorkerCapacityPlannerPromptAndQueueLimit(t *testing.T) {
+	d := testDB(t)
+	t.Cleanup(func() { d.Close() })
+	exp, err := d.CreateExploration("isolated capacity fixture", "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := d.Exploration(exp)
+	for i := 0; i < 2; i++ {
+		if _, err := ts.AddNode(db.KindIntent, map[string]any{"summary": "running fixture"}, 5, "running", "fixture", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := ts.AddNode(db.KindIntent, map[string]any{"summary": "queued fixture"}, 5, "open", "fixture", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	toolset := NewToolSet(ts, "planner")
+	toolset.workerConcurrency = 12
+	toolset.maxOpenIntents = 12
+	capacity := toolset.graphOverviewData()["worker_capacity"].(map[string]int)
+	if capacity["limit"] != 12 || capacity["running"] != 2 || capacity["queued"] != 3 || capacity["available"] != 7 {
+		t.Fatalf("capacity=%v", capacity)
+	}
+	provider := &workerCapacityProvider{}
+	planner := NewPlanner(provider, "fixture", t.TempDir(), nil, 0, 1)
+	planner.SetNonStreaming(func() bool { return true })
+	oldPrompt := PromptOverride
+	PromptOverride = func(string) (string, bool) { return "Custom planner prompt remains intact", true }
+	t.Cleanup(func() { PromptOverride = oldPrompt })
+	if _, _, err := planner.Plan(WithWorkerConcurrency(t.Context(), 12), 0, nil, ts, "fixture", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	input := provider.request.Messages[len(provider.request.Messages)-1].Text()
+	if !strings.Contains(input, "最多 12 个 Work Agent") || !strings.Contains(input, `"available":7`) || !strings.Contains(input, "open 队列上限为 12") {
+		t.Fatalf("planner did not receive actual capacity: %s", input)
+	}
+	if !strings.Contains(strings.Join(provider.request.System, "\n"), "Custom planner prompt remains intact") {
+		t.Fatal("custom planner prompt changed")
+	}
+	var items []map[string]any
+	for i := 0; i < 15; i++ {
+		items = append(items, map[string]any{"summary": "independent fixture"})
+	}
+	raw, _ := json.Marshal(map[string]any{"intents": items})
+	if _, err := toolset.addIntent().Call(t.Context(), raw, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ts.CountOpenIntents(); err != nil || n != 12 {
+		t.Fatalf("open=%d err=%v", n, err)
+	}
+	toolset.workerConcurrency = 1
+	capacity = toolset.graphOverviewData()["worker_capacity"].(map[string]int)
+	if capacity["available"] != 0 {
+		t.Fatal("downsize exposed negative availability")
+	}
+}

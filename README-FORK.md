@@ -2,6 +2,10 @@
 
 本文仅记录本仓库二次开发新增的功能、配置和部署差异。原项目文档保留在 [README.md](README.md)，保持原样；后续二次开发说明统一维护在本文件。Agent 协作规则见 [AGENTS.md](AGENTS.md)。
 
+## 工作并发动态调整
+
+系统设置的「工作并发 · Work Agent 数」是每个任务同时执行意图的上限，默认 3。保存后更新现有任务的 Worker 池，无需重新创建任务或重启；扩容立即增加领取槽位，缩容让多余 Worker 完成当前意图后退出，短暂收敛期间在途意图可能多于新上限。暂停和排队状态仍由原任务控制管理。规划者每轮读取实际容量及 open/running 数量，按可独立执行的方向批量派发；并发数不会凭空生成工作，队列为空时等待规划。`GET /api/stats?task=<id>` 的 `active_task.worker_limit` 返回当前允许领取新意图的槽位数。
+
 ## Clash 订阅与 VPN-only Docker 部署
 
 可选覆盖文件 `docker-compose.vpn.yml` 使用固定版本／摘要的 Mihomo v1.19.33，为 ARTEX、ScopeSentry 服务及扫描节点分别提供独立网络命名空间。TUN 接管非代理工具的 TCP／受节点支持的 UDP；防火墙默认阻断直连，VPN 进程退出、节点全部不可用或订阅加载失败不能回退本机出口。客户端不能访问 Docker 的外部 DNS 转发器，业务 DNS 经 VPN 解析；IPv6 默认阻断。数据库、MCP 等只放行固定内部服务的具体 TCP 端口，管理端口的响应沿原连接返回。未把所有私网网段加入直连白名单。
@@ -31,11 +35,17 @@ Reqable／企业调试代理截获 Docker TLS 时，把操作系统已经信任�
 
 更换订阅时先停止任务，将旧配置显式移到安全位置，再重新生成；重建三个网关及依赖它们的工作容器，不能只移走网关的网络命名空间。数据库地址改变也需要重建相应网关，以重新核验内部服务地址。启用前额外挂入 ARTEX／扫描容器的靶场网络不会自动迁移；当前覆盖文件没有授权任意实验网段，靶场需另行适配，不要沿用原接网脚本绕过隔离。
 
+内部服务解析只接受 RFC1918 IPv4 地址（10/8、172.16/12、192.168/16）。Docker 启动期间若返回宿主代理的 198.18/15 假 IP、保留地址或公网地址，网关按启动重试预算重新解析；持续失败时保持阻断，不写入内部直连规则。ScopeSentry 因数据库地址固定错误而无法启动时，使用上述两个 Compose 文件重建 `vpn-scopesentry`、`vpn-scopesentry-scan` 及对应服务。
+
 ### 节点切换与边界
 
 需要与已验证的本机 ClashX 配置对齐时，使用 `python3 deploy/vpn/sync-clash.py <Clash YAML 文件>` 显式导入节点快照。解析离线运行于 Docker Go 工具链，需已有 `golang:1.26-bookworm` 镜像及本机 Go 缓存；不读取／导入原配置的直连规则、DNS、控制面与角色权限，不输出节点凭据，不修改源文件。原 VPN 配置只首次备份到私密 `.vpn/config.before-clash-sync.json`；快照保存在 `.vpn/clash-nodes.json`，改用 file provider，启动时复制到网关私有目录。此模式是固定快照，**不会再由原 HTTP 订阅每天覆盖节点入口**；ClashX 更新后需再次同步并重建三个网关和依赖容器。HTTP 订阅模式仍是默认；回到该模式需显式恢复备份，不默默切换来源。
 
-订阅每天刷新，节点健康检查默认每 60 秒一次，连接故障会触发健康检查并选用首个可用节点；切换影响新连接，不会迁移既有连接，不保证不同节点对应不同公网 IP。三个组件分别选择出口，但同一个 ARTEX 内的多个任务及模型调用仍共享其节点组，当前没有按任务分配节点或出口 IP 核验。Agent 可以通过下方受限工具主动选择其他订阅节点，节点故障自动兜底仍独立生效。
+macOS 上 ClashX Pro 开启全局 TUN 时，Docker 内核连接 VPN 节点的握手流量也可能被宿主 TUN 再次代理，导致本机节点可用、容器内相同节点失败。此环境可使用 `python3 deploy/vpn/sync-clash.py <Clash YAML 文件> --host-bridge`，再执行 `python3 deploy/vpn/host_bridge.py install`。该命令安装登录时启动、异常退出后自动重启的 LaunchAgent `local.artex.vpn-host-bridge`；需要保持 ClashX Pro 运行以提供节点域名的真实 DNS 答案。转发服务只监听 `127.0.0.1:19420`、需要随机凭据，只允许私密快照内的 VPN 服务器及其端口，并将出站连接绑定到当前默认物理网卡，拒绝假 IP／私网答案及无法绑定物理网卡的连接。它只承载节点握手及加密数据，VPN 认证、目标 DNS、节点选择和业务流量隔离仍由三个 Mihomo 网关负责，不向业务容器添加宿主直连规则。TCP 与 SOCKS UDP 转发均受同一节点白名单约束。网关镜像需要重新构建，三个网关与依赖容器需要一起重建；重启前后的运行任务必须核对恢复。
+
+宿主转发源配置保存在 `.vpn/host-bridge.json`；安装时将脚本和配置复制到当前用户的 `~/Library/Application Support/ARTEX/vpn-host-bridge/`（私密目录），日志也在该目录，避免 LaunchAgent 依赖外置项目卷的启动权限。它们均不进入 Git 或镜像。启用后后续 `sync-clash.py` 会保留转发模式及认证凭据、更新节点白名单；同步后再次执行 `host_bridge.py install` 重载宿主服务，然后重建网关和依赖容器。此功能不会自动监视或更新 ClashX 订阅；切换回 HTTP 模式时应恢复原配置并停止对应 LaunchAgent。可使用 `python3 tests/vpn/compare_clash.py --container <VPN 网关容器名>` 对照全部节点在本机与容器内对标准 HTTPS 健康检查地址的实际可用性，不改变当前节点选择；检测结果只代表该时点及该测试地址。
+
+HTTP 订阅模式每天刷新；本地快照模式需显式重新同步。两种模式的节点健康检查默认每 60 秒一次，连接故障会触发健康检查并选用首个可用节点；切换影响新连接，不会迁移既有连接，不保证不同节点对应不同公网 IP。三个组件分别选择出口，但同一个 ARTEX 内的多个任务及模型调用仍共享其节点组，当前没有按任务分配节点或出口 IP 核验。Agent 可以通过下方受限工具主动选择其他订阅节点，节点故障自动兜底仍独立生效。
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.vpn.yml exec -T vpn-artex python3 /opt/vpn/runtime.py status
